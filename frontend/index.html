@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crypto Fraud Tracker</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+    }
+    .header {
+      background: linear-gradient(135deg, #161b22 0%, #1c2128 100%);
+      border-bottom: 1px solid #30363d;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header h1 { font-size: 22px; font-weight: 600; }
+    .header .badge {
+      background: #1f6feb; color: white; font-size: 11px;
+      padding: 3px 8px; border-radius: 12px; font-weight: 600;
+    }
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+    .search-bar {
+      display: flex; gap: 12px; margin-bottom: 24px;
+    }
+    .search-bar input {
+      flex: 1; background: #161b22; border: 1px solid #30363d;
+      color: #e6edf3; padding: 14px 16px; border-radius: 8px;
+      font-size: 14px; font-family: monospace;
+    }
+    .search-bar input:focus { outline: none; border-color: #1f6feb; }
+    .search-bar select {
+      background: #161b22; border: 1px solid #30363d; color: #e6edf3;
+      padding: 0 12px; border-radius: 8px; font-size: 14px;
+    }
+    .btn {
+      background: #238636; color: white; border: none;
+      padding: 14px 28px; border-radius: 8px; font-size: 14px;
+      font-weight: 600; cursor: pointer; transition: background 0.2s;
+    }
+    .btn:hover { background: #2ea043; }
+    .btn:disabled { background: #30363d; cursor: not-allowed; }
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; }
+    @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; padding: 24px; margin-bottom: 24px;
+    }
+    .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #8b949e; margin-bottom: 16px; }
+    .score-circle {
+      width: 140px; height: 140px; border-radius: 50%;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; margin: 0 auto 16px;
+      border: 6px solid;
+    }
+    .score-value { font-size: 38px; font-weight: 700; line-height: 1; }
+    .score-label { font-size: 12px; text-transform: uppercase; margin-top: 4px; }
+    .risk-critical { color: #f85149; border-color: #f85149; }
+    .risk-high { color: #fb8500; border-color: #fb8500; }
+    .risk-medium { color: #d29922; border-color: #d29922; }
+    .risk-low { color: #3fb950; border-color: #3fb950; }
+    .explanation {
+      background: #0d1117; border-left: 3px solid #1f6feb;
+      padding: 12px 16px; border-radius: 6px; font-size: 14px;
+      line-height: 1.5; margin-top: 16px;
+    }
+    .metric-row {
+      display: flex; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid #21262d; font-size: 14px;
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-row .label { color: #8b949e; }
+    .metric-row .value { font-weight: 600; font-family: monospace; }
+    .badge-cat {
+      display: inline-block; padding: 4px 10px; border-radius: 12px;
+      font-size: 12px; font-weight: 600; margin: 2px;
+    }
+    #graph { width: 100%; height: 500px; background: #0d1117; border-radius: 8px; }
+    .node-label { font-size: 9px; fill: #8b949e; pointer-events: none; }
+    .timeline-item {
+      display: flex; gap: 12px; padding: 12px 0;
+      border-bottom: 1px solid #21262d; font-size: 13px;
+    }
+    .timeline-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #1f6feb; margin-top: 4px; flex-shrink: 0;
+    }
+    .timeline-content { flex: 1; }
+    .timeline-time { color: #8b949e; font-size: 11px; }
+    .loading { text-align: center; padding: 40px; color: #8b949e; }
+    .empty { text-align: center; padding: 60px 20px; color: #6e7681; }
+    .empty svg { margin-bottom: 16px; opacity: 0.4; }
+    .error { background: #2d1418; border: 1px solid #f85149; color: #ff7b72;
+      padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; color: #8b949e; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .examples { margin-top: 8px; font-size: 12px; color: #6e7681; }
+    .examples code {
+      background: #161b22; padding: 2px 6px; border-radius: 4px;
+      cursor: pointer; margin-right: 8px; font-size: 11px;
+    }
+    .examples code:hover { background: #1f6feb; color: white; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+    const API = "http://localhost:8000";
+
+    const CATEGORY_COLORS = {
+      ransomware: "#f85149", scam: "#db61a2", darknet: "#bc8cff",
+      mixer: "#fb8500", exchange: "#3fb950", gambling: "#d29922",
+      marketplace: "#58a6ff", legitimate: "#56d364", unknown: "#8b949e",
+    };
+
+    // ---- Grafo de força com D3 ----
+    function ForceGraph({ data }) {
+      const ref = useRef();
+      useEffect(() => {
+        if (!data || !data.nodes || data.nodes.length === 0) return;
+        const svg = d3.select(ref.current);
+        svg.selectAll("*").remove();
+        const width = ref.current.clientWidth;
+        const height = 500;
+
+        const nodes = data.nodes.map(d => ({ ...d }));
+        const links = data.edges.map(d => ({ ...d }));
+
+        const sim = d3.forceSimulation(nodes)
+          .force("link", d3.forceLink(links).id(d => d.id).distance(90))
+          .force("charge", d3.forceManyBody().strength(-250))
+          .force("center", d3.forceCenter(width / 2, height / 2))
+          .force("collide", d3.forceCollide().radius(28));
+
+        const defs = svg.append("defs");
+        defs.append("marker")
+          .attr("id", "arrow").attr("viewBox", "0 -5 10 10")
+          .attr("refX", 22).attr("refY", 0)
+          .attr("markerWidth", 6).attr("markerHeight", 6)
+          .attr("orient", "auto")
+          .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#484f58");
+
+        const link = svg.append("g").selectAll("line")
+          .data(links).join("line")
+          .attr("stroke", "#484f58").attr("stroke-width", 1.5)
+          .attr("marker-end", "url(#arrow)");
+
+        const linkLabel = svg.append("g").selectAll("text")
+          .data(links).join("text")
+          .text(d => d.label).attr("font-size", 9).attr("fill", "#6e7681");
+
+        const node = svg.append("g").selectAll("circle")
+          .data(nodes).join("circle")
+          .attr("r", d => d.category === "unknown" ? 14 : 18)
+          .attr("fill", d => CATEGORY_COLORS[d.category] || "#8b949e")
+          .attr("stroke", "#0d1117").attr("stroke-width", 2)
+          .style("cursor", "pointer")
+          .call(d3.drag()
+            .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+            .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+            .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+        node.append("title").text(d => `${d.id}\n${d.category} (score ${d.risk_score})`);
+
+        const label = svg.append("g").selectAll("text")
+          .data(nodes).join("text")
+          .attr("class", "node-label").attr("text-anchor", "middle")
+          .attr("dy", 30).text(d => d.label);
+
+        sim.on("tick", () => {
+          link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+              .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+          linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+                   .attr("y", d => (d.source.y + d.target.y) / 2);
+          node.attr("cx", d => d.x).attr("cy", d => d.y);
+          label.attr("x", d => d.x).attr("y", d => d.y);
+        });
+      }, [data]);
+
+      return <svg id="graph" ref={ref}></svg>;
+    }
+
+    // ---- Card de Score ----
+    function ScoreCard({ result }) {
+      const level = result.risk_level || "low";
+      return (
+        <div className="card">
+          <h2>Avaliação de Risco</h2>
+          <div className={`score-circle risk-${level}`}>
+            <div className="score-value">{result.overall_risk_score}</div>
+            <div className="score-label">/ 100</div>
+          </div>
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <span className={`badge-cat risk-${level}`} style={{
+              background: "transparent", border: "1px solid currentColor",
+              fontSize: 13, padding: "5px 14px"
+            }}>{level.toUpperCase()}</span>
+          </div>
+          <div className="explanation">{result.explanation}</div>
+          <div style={{ marginTop: 16 }}>
+            <div className="metric-row">
+              <span className="label">Carteira inicial</span>
+              <span className="value">{result.initial_wallet_score}</span>
+            </div>
+            <div className="metric-row">
+              <span className="label">Score máximo</span>
+              <span className="value">{result.max_risk_score}</span>
+            </div>
+            <div className="metric-row">
+              <span className="label">Ponderado</span>
+              <span className="value">{result.weighted_risk_score}</span>
+            </div>
+            <div className="metric-row">
+              <span className="label">Wallets rastreadas</span>
+              <span className="value">{result.wallets_found}</span>
+            </div>
+            <div className="metric-row">
+              <span className="label">Crime suspeito</span>
+              <span className="value">{result.suspected_crime || "—"}</span>
+            </div>
+            <div className="metric-row">
+              <span className="label">Neo4j</span>
+              <span className="value" style={{ color: result.neo4j === "persisted" ? "#3fb950" : "#fb8500" }}>
+                {result.neo4j}
+              </span>
+            </div>
+          </div>
+          {result.dangerous_destinations && result.dangerous_destinations.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <h2 style={{ marginBottom: 8 }}>Destinos Perigosos</h2>
+              {result.dangerous_destinations.map((d, i) => (
+                <span key={i} className="badge-cat" style={{
+                  background: CATEGORY_COLORS[d.category] + "22",
+                  color: CATEGORY_COLORS[d.category]
+                }}>{d.category}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ---- Timeline ----
+    function Timeline({ events }) {
+      if (!events || events.length === 0) return null;
+      return (
+        <div className="card">
+          <h2>Timeline de Transações</h2>
+          {events.slice(0, 15).map((e, i) => (
+            <div className="timeline-item" key={i}>
+              <div className="timeline-dot"></div>
+              <div className="timeline-content">
+                <div>{e.description}</div>
+                <div className="timeline-time">
+                  {e.amount_btc ? `${e.amount_btc} BTC · ` : ""}{e.event_type}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ---- App principal ----
+    function App() {
+      const [wallet, setWallet] = useState("");
+      const [depth, setDepth] = useState(3);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [result, setResult] = useState(null);
+      const [graph, setGraph] = useState(null);
+      const [timeline, setTimeline] = useState(null);
+
+      const examples = [
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+        "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+      ];
+
+      async function investigate(addr) {
+        const target = addr || wallet;
+        if (!target.trim()) { setError("Informe um endereço Bitcoin"); return; }
+        setLoading(true); setError(null); setResult(null); setGraph(null); setTimeline(null);
+        try {
+          const res = await fetch(`${API}/api/v1/investigate`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wallet_address: target, depth: parseInt(depth) }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Erro na investigação");
+          }
+          const data = await res.json();
+          setResult(data);
+          const [g, t] = await Promise.all([
+            fetch(`${API}/api/v1/report/${data.investigation_id}/graph`).then(r => r.json()),
+            fetch(`${API}/api/v1/report/${data.investigation_id}/timeline`).then(r => r.json()),
+          ]);
+          setGraph(g);
+          setTimeline(t.timeline);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      return (
+        <div>
+          <div className="header">
+            <span style={{ fontSize: 24 }}>🔍</span>
+            <h1>Crypto Fraud Tracker</h1>
+            <span className="badge">v2.0</span>
+          </div>
+          <div className="container">
+            <div className="search-bar">
+              <input
+                placeholder="Endereço Bitcoin (ex: bc1q... ou 1A1z...)"
+                value={wallet}
+                onChange={e => setWallet(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && investigate()}
+              />
+              <select value={depth} onChange={e => setDepth(e.target.value)}>
+                <option value="1">Depth 1</option>
+                <option value="2">Depth 2</option>
+                <option value="3">Depth 3</option>
+                <option value="4">Depth 4</option>
+              </select>
+              <button className="btn" onClick={() => investigate()} disabled={loading}>
+                {loading ? "Investigando..." : "Investigar"}
+              </button>
+            </div>
+            <div className="examples">
+              Exemplos:
+              {examples.map((ex, i) => (
+                <code key={i} onClick={() => { setWallet(ex); investigate(ex); }}>{ex.slice(0, 20)}...</code>
+              ))}
+            </div>
+
+            {error && <div className="error" style={{ marginTop: 16 }}>⚠️ {error}</div>}
+
+            {loading && <div className="loading">Rastreando cadeia de transações...</div>}
+
+            {!result && !loading && (
+              <div className="empty">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+                </svg>
+                <p>Informe um endereço Bitcoin para iniciar a investigação</p>
+              </div>
+            )}
+
+            {result && (
+              <div className="grid" style={{ marginTop: 24 }}>
+                <div>
+                  <ScoreCard result={result} />
+                </div>
+                <div>
+                  <div className="card">
+                    <h2>Grafo de Transações</h2>
+                    <ForceGraph data={graph} />
+                    <div className="legend">
+                      {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
+                        <div className="legend-item" key={cat}>
+                          <span className="legend-dot" style={{ background: color }}></span>{cat}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <Timeline events={timeline} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

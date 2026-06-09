@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile
     container_name: crypto-tracker-frontend
     ports:
-      - "3000:3000"
+      - "3000:80"
     networks:
       - crypto-tracker
 
