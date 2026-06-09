@@ -24,9 +24,9 @@ class IOCValidator:
     
     # Padrões regex para diferentes tipos
     BITCOIN_ADDRESS_PATTERNS = {
-        'P2PKH': r'^1[1-9A-HJ-NP-Z]{25,34}$',           # Começa com 1
-        'P2SH': r'^3[1-9A-HJ-NP-Z]{25,34}$',            # Começa com 3
-        'BECH32': r'^bc1[a-z0-9]{39,59}$',              # Começa com bc1
+        'P2PKH': r'^1[1-9A-HJ-NP-Za-km-z]{25,34}$',     # Base58: comeca com 1
+        'P2SH': r'^3[1-9A-HJ-NP-Za-km-z]{25,34}$',      # Base58: comeca com 3
+        'BECH32': r'^bc1[a-z0-9]{11,71}$',              # Bech32: comeca com bc1
     }
     
     TXID_PATTERN = r'^[a-f0-9]{64}$'

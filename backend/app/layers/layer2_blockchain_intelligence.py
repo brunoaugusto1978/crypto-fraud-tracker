@@ -24,12 +24,12 @@ class MockBlockchainData:
     
     # Carteiras conhecidas como MIXERS
     KNOWN_MIXERS = {
-        '1A1z7agoat4qNB5agoat4qNB5agoat4qNB': {
+        '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa': {
             'name': 'Tornado Cash',
             'category': 'mixer',
             'risk_level': 'high',
         },
-        '3J98t1WpEZ73CNmYviecrnyiWrnqRhWNLy': {
+        '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy': {
             'name': 'Mixing Service A',
             'category': 'mixer',
             'risk_level': 'high',
@@ -43,7 +43,7 @@ class MockBlockchainData:
             'category': 'exchange',
             'risk_level': 'low',
         },
-        '3J98t1WpEZ73CNmYviecrnyiWrnqRhWNLy': {
+        '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy': {
             'name': 'Kraken Deposit',
             'category': 'exchange',
             'risk_level': 'low',
@@ -299,30 +299,35 @@ class BlockchainIntelligenceService:
         visited = set()
         chain = []
         queue = [(start_wallet, 0)]
-        
-        while queue and len(visited) < 100:  # Limite de 100 wallets
+
+        # Teto de wallets proporcional ao depth (evita explosao do grafo)
+        # depth 1 -> ~4, depth 2 -> ~12, depth 3 -> ~28
+        max_wallets = min(50, 2 + 2 * (2 ** depth))
+        # Quantos ramos seguir por wallet (fan-out controlado)
+        branching = 3
+
+        while queue and len(visited) < max_wallets:
             wallet, current_depth = queue.pop(0)
-            
+
             if wallet in visited or current_depth >= depth:
                 continue
-            
+
             visited.add(wallet)
-            
-            # Enriquecer carteira
+
             enrichment = await self.provider.enrich_wallet(wallet)
             chain.append({
                 "wallet": wallet,
                 "depth": current_depth,
                 "enrichment": enrichment
             })
-            
-            # Buscar histórico e adicionar endereços à fila
-            history = await self.provider.get_wallet_history(wallet, limit=10)
-            for tx in history:
+
+            # Seguir apenas os primeiros 'branching' destinos
+            history = await self.provider.get_wallet_history(wallet, limit=branching)
+            for tx in history[:branching]:
                 next_wallet = tx['to_address']
                 if next_wallet not in visited:
                     queue.append((next_wallet, current_depth + 1))
-        
+
         return sorted(chain, key=lambda x: x['depth'])
 
 # ============================================================================
@@ -336,7 +341,7 @@ async def main():
     
     # Teste 1: Enriquecer carteira
     print("=== Test 1: Enrich Wallet ===")
-    wallet_address = '1A1z7agoat4qNB5agoat4qNB5agoat4qNB'
+    wallet_address = '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'
     enrichment = await service.provider.enrich_wallet(wallet_address)
     print(json.dumps(enrichment, indent=2))
     

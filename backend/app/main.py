@@ -19,6 +19,7 @@ from app.layers.layer4_correlation_engine import CorrelationEngine, ClusterAnaly
 from app.layers.layer5_report_generator import (
     ReportGenerator, TimelineGenerator, GraphVisualizer,
 )
+from app.layers.investigation_scorer import InvestigationScorer
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
@@ -56,6 +57,7 @@ blockchain_service = BlockchainIntelligenceService(blockchain_intel)
 correlation_engine = CorrelationEngine()
 cluster_analyzer = ClusterAnalyzer(correlation_engine)
 report_gen = ReportGenerator()
+investigation_scorer = InvestigationScorer()
 
 neo4j_conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 graph_service = None
@@ -149,7 +151,12 @@ async def investigate(req: InvestigateRequest):
         score = correlation_engine.calculate_risk_score(enrichments.get(w, {}), {})
         score["wallet"] = w
         risk_scores.append(score)
-    avg_score = sum(s["risk_score"] for s in risk_scores) / len(risk_scores) if risk_scores else 0
+    scoring = investigation_scorer.score_investigation(
+        initial_wallet=req.wallet_address,
+        wallets=wallets,
+        enrichments=enrichments,
+        risk_scores=risk_scores,
+    )
     cluster = cluster_analyzer.analyze_cluster(
         cluster_id=investigation_id,
         wallets=[{"address": w, **enrichments.get(w, {})} for w in wallets],
@@ -177,7 +184,14 @@ async def investigate(req: InvestigateRequest):
         "created_at": datetime.utcnow().isoformat() + "Z"}
     return {"investigation_id": investigation_id, "status": "completed",
             "wallet_address": req.wallet_address, "wallets_found": len(wallets),
-            "transactions_traced": len(transactions), "average_risk_score": round(avg_score, 1),
+            "transactions_traced": len(transactions),
+            "overall_risk_score": scoring["overall_risk_score"],
+            "risk_level": scoring["risk_level"],
+            "initial_wallet_score": scoring["initial_wallet_score"],
+            "max_risk_score": scoring["max_risk_score"],
+            "weighted_risk_score": scoring["weighted_risk_score"],
+            "dangerous_destinations": scoring["dangerous_destinations"],
+            "explanation": scoring["explanation"],
             "suspected_crime": cluster.get("suspected_crime"),
             "neo4j": neo4j_status, "report_ready": True}
 
