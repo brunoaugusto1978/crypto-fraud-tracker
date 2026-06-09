@@ -49,6 +49,7 @@ services:
       NEO4J_PASSWORD: REMOVED_DEV_PASSWORD
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      INTEL_PROVIDER: blockstream
     ports:
       - "8000:8000"
     depends_on:

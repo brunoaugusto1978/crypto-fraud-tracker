@@ -14,6 +14,7 @@ from app.layers.layer1_ioc_intake import IOCIntakeService, IOCValidator
 from app.layers.layer2_blockchain_intelligence import (
     MockBlockchainIntelligence, BlockchainIntelligenceService,
 )
+from app.layers.layer2_blockstream import BlockstreamIntelligence
 from app.layers.layer3_graph_fixed import Neo4jConnection, GraphDatabaseService
 from app.layers.layer4_correlation_engine import CorrelationEngine, ClusterAnalyzer
 from app.layers.layer5_report_generator import (
@@ -28,6 +29,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "REMOVED_DEV_PASSWORD")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://crypto_user:REMOVED_DEV_PASSWORD@postgres:5432/crypto_tracker")
+INTEL_PROVIDER = os.getenv("INTEL_PROVIDER", "mock")  # "mock" ou "blockstream"
 
 
 class SubmitIOCRequest(BaseModel):
@@ -54,7 +56,12 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
 ioc_service = IOCIntakeService(redis_host=REDIS_HOST, redis_port=REDIS_PORT)
-blockchain_intel = MockBlockchainIntelligence()
+if INTEL_PROVIDER == "blockstream":
+    blockchain_intel = BlockstreamIntelligence()
+    print("[Intel] usando BlockstreamIntelligence (dados reais)")
+else:
+    blockchain_intel = MockBlockchainIntelligence()
+    print("[Intel] usando MockBlockchainIntelligence (prototipagem)")
 blockchain_service = BlockchainIntelligenceService(blockchain_intel)
 correlation_engine = CorrelationEngine()
 cluster_analyzer = ClusterAnalyzer(correlation_engine)
@@ -80,7 +87,8 @@ def get_graph_service():
 @app.get("/api/v1/health")
 async def health_check():
     services = {"ioc_intake": "ready", "blockchain_intelligence": "ready",
-                "correlation_engine": "ready", "report_generator": "ready"}
+                "correlation_engine": "ready", "report_generator": "ready",
+                "intel_provider": INTEL_PROVIDER}
     try:
         ioc_service.redis_client.ping()
         services["redis"] = "connected"
@@ -203,10 +211,21 @@ async def get_investigation(investigation_id: str):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
-    return {"investigation_id": investigation_id, "initial_wallet": inv["initial_wallet"],
-            "wallets_discovered": len(inv["wallets"]),
+    scoring = inv.get("scoring", {})
+    return {"investigation_id": investigation_id, "status": "completed",
+            "wallet_address": inv["initial_wallet"],
+            "wallets_found": len(inv["wallets"]),
             "transactions_traced": len(inv["transactions"]),
-            "cluster_analysis": inv["cluster_analysis"], "created_at": inv["created_at"]}
+            "overall_risk_score": scoring.get("overall_risk_score", 0),
+            "risk_level": scoring.get("risk_level", "low"),
+            "initial_wallet_score": scoring.get("initial_wallet_score", 0),
+            "max_risk_score": scoring.get("max_risk_score", 0),
+            "weighted_risk_score": scoring.get("weighted_risk_score", 0),
+            "dangerous_destinations": scoring.get("dangerous_destinations", []),
+            "explanation": scoring.get("explanation", ""),
+            "suspected_crime": inv["cluster_analysis"].get("suspected_crime"),
+            "neo4j": "persisted", "report_ready": True,
+            "created_at": inv["created_at"]}
 
 
 @app.get("/api/v1/report/{investigation_id}/summary")
