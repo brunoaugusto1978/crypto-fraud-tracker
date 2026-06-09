@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+env/
+.venv
+
+# Segredos - NUNCA commitar
+.env
+.env.local
+*.key
+*.pem
+secrets/
+credentials.json
+**/chainalysis_key*
+**/trm_labs_key*
+**/elliptic_key*
+
+# Bancos de dados (volumes locais)
+neo4j_data/
+postgres_data/
+redis_data/
+*.db
+*.sqlite
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Node/Frontend
+node_modules/
+build/
+dist/
+
+# Relatórios gerados
+reports/
+*.report.html
+investigation_*.html
+report_*.html
+
+# Arquivos temporários
+*.tmp
+*.bak
+files.zip
+.pytest_cache/
