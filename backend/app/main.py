@@ -20,12 +20,14 @@ from app.layers.layer5_report_generator import (
     ReportGenerator, TimelineGenerator, GraphVisualizer,
 )
 from app.layers.investigation_scorer import InvestigationScorer
+from app.layers.db_store import InvestigationStore
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "REMOVED_DEV_PASSWORD")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://crypto_user:REMOVED_DEV_PASSWORD@postgres:5432/crypto_tracker")
 
 
 class SubmitIOCRequest(BaseModel):
@@ -61,7 +63,7 @@ investigation_scorer = InvestigationScorer()
 
 neo4j_conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 graph_service = None
-investigations = {}
+investigations = InvestigationStore(POSTGRES_URL)
 
 
 def get_graph_service():
@@ -180,7 +182,7 @@ async def investigate(req: InvestigateRequest):
     investigations[investigation_id] = {
         "id": investigation_id, "initial_wallet": req.wallet_address,
         "wallets": wallets, "enrichments": enrichments, "transactions": transactions,
-        "risk_scores": risk_scores, "cluster_analysis": cluster,
+        "risk_scores": risk_scores, "cluster_analysis": cluster, "scoring": scoring,
         "created_at": datetime.utcnow().isoformat() + "Z"}
     return {"investigation_id": investigation_id, "status": "completed",
             "wallet_address": req.wallet_address, "wallets_found": len(wallets),
@@ -266,6 +268,13 @@ async def graph_high_risk(min_score: float = 50):
 async def graph_recipients(wallet_address: str, depth: int = 3):
     gs = get_graph_service()
     return {"recipients": gs.find_recipients(wallet_address, depth)}
+
+
+@app.get("/api/v1/investigations/recent")
+async def list_recent_investigations(limit: int = 50):
+    """Lista investigacoes persistidas (historico)."""
+    return {"investigations": investigations.list_recent(limit),
+            "total": investigations.count()}
 
 
 @app.get("/")
