@@ -35,19 +35,22 @@ class InvestigationScorer:
                 dangerous.append({"wallet": wallet, "category": category})
             propagation_risk = max(propagation_risk, cat_risk)
 
+        initial_category = enrichments.get(initial_wallet, {}).get("category", "unknown")
+
         overall = max(initial_score, weighted_score, propagation_risk if dangerous else 0)
         overall = round(min(100.0, overall), 1)
 
         return {
             "overall_risk_score": overall,
             "risk_level": self._level(overall),
+            "initial_wallet_category": initial_category,
             "initial_wallet_score": round(initial_score, 1),
             "max_risk_score": round(max_score, 1),
             "weighted_risk_score": round(weighted_score, 1),
             "propagation_risk": propagation_risk,
             "average_risk_score": round(avg_score, 1),
             "dangerous_destinations": dangerous,
-            "explanation": self._explain(initial_score, weighted_score, propagation_risk, dangerous),
+            "explanation": self._explain(initial_score, weighted_score, propagation_risk, dangerous, initial_category),
         }
 
     @staticmethod
@@ -58,10 +61,21 @@ class InvestigationScorer:
         return "low"
 
     @staticmethod
-    def _explain(initial, weighted, propagation, dangerous):
+    def _explain(initial, weighted, propagation, dangerous, initial_category="unknown"):
+        category_desc = {
+            "ransomware": "a carteira investigada esta associada a ransomware",
+            "scam": "a carteira investigada esta associada a scam",
+            "darknet": "a carteira investigada esta associada a darknet",
+            "mixer": "a carteira investigada e um mixer (servico de anonimizacao)",
+            "exchange": "a carteira investigada e uma exchange (ponto de cash-out)",
+            "gambling": "a carteira investigada e de gambling",
+            "marketplace": "a carteira investigada e um marketplace",
+        }
         parts = []
-        if initial >= 50:
-            parts.append(f"carteira inicial de alto risco (score {round(initial,1)})")
+        if initial_category in category_desc:
+            parts.append(category_desc[initial_category])
+        elif initial >= 50:
+            parts.append(f"carteira inicial de alto risco (score {round(initial, 1)})")
         if dangerous:
             cats = ", ".join(sorted({d["category"] for d in dangerous}))
             parts.append(f"fundos fluem para destinos perigosos: {cats}")
