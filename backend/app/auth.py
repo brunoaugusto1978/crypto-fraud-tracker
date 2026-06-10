@@ -8,12 +8,40 @@ from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://crypto_user:REMOVED_DEV_PASSWORD@postgres:5432/crypto_tracker")
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+POSTGRES_URL = os.getenv("POSTGRES_URL")
+JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))
 
+# Fail-safe: nao permitir subir com segredos ausentes ou inseguros.
+_INSECURE_DEFAULTS = {"", "dev-secret-change-me", "change-me", "secret"}
+if not JWT_SECRET or JWT_SECRET in _INSECURE_DEFAULTS:
+    raise RuntimeError(
+        "JWT_SECRET ausente ou inseguro. Defina um valor forte no .env "
+        "(ex: python3 -c \"import secrets; print(secrets.token_urlsafe(48))\")."
+    )
+if not POSTGRES_URL:
+    raise RuntimeError("POSTGRES_URL ausente. Defina a conexao do banco no .env.")
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+import re
+
+
+def validate_password_strength(password: str):
+    """Valida forca da senha. Retorna (ok: bool, erro: str|None)."""
+    if len(password) < 12:
+        return False, "senha deve ter ao menos 12 caracteres"
+    if not re.search(r"[A-Z]", password):
+        return False, "senha deve conter ao menos uma letra maiuscula"
+    if not re.search(r"[a-z]", password):
+        return False, "senha deve conter ao menos uma letra minuscula"
+    if not re.search(r"[0-9]", password):
+        return False, "senha deve conter ao menos um numero"
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return False, "senha deve conter ao menos um caractere especial"
+    return True, None
 
 
 class AuthService:
@@ -56,8 +84,9 @@ class AuthService:
     def create_user(self, username, password, email=None, role="analyst"):
         if len(username) < 3:
             raise ValueError("username deve ter ao menos 3 caracteres")
-        if len(password) < 6:
-            raise ValueError("senha deve ter ao menos 6 caracteres")
+        ok, erro = validate_password_strength(password)
+        if not ok:
+            raise ValueError(erro)
         pwd_hash = self.hash_password(password)
         try:
             conn = self._connect()

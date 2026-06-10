@@ -28,3 +28,29 @@ def test_jwt_cria_e_decodifica():
 
 def test_jwt_invalido_retorna_none():
     assert AuthService.decode_token("token.invalido.aqui") is None
+
+
+# ---- Testes da politica de senha forte ----
+from app.auth import validate_password_strength
+
+
+def test_senha_forte_aceita():
+    ok, erro = validate_password_strength("Senha@Forte123")
+    assert ok is True
+    assert erro is None
+
+def test_senha_curta_rejeitada():
+    ok, erro = validate_password_strength("Ab@1cd")
+    assert ok is False
+
+def test_senha_sem_maiuscula_rejeitada():
+    ok, erro = validate_password_strength("senha@forte123")
+    assert ok is False
+
+def test_senha_sem_numero_rejeitada():
+    ok, erro = validate_password_strength("SenhaForte@abc")
+    assert ok is False
+
+def test_senha_sem_especial_rejeitada():
+    ok, erro = validate_password_strength("SenhaForte1234")
+    assert ok is False

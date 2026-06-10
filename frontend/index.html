@@ -190,46 +190,84 @@
     }
 
     // ---------- GRAFO ----------
-    function ForceGraph({ data }) {
+    function ForceGraph({ data, initialWallet }) {
       const ref = useRef();
       useEffect(() => {
         if (!data || !data.nodes || data.nodes.length === 0) return;
         const svg = d3.select(ref.current);
         svg.selectAll("*").remove();
         const width = ref.current.clientWidth, height = 500;
+
         const nodes = data.nodes.map(d => ({ ...d }));
         const links = data.edges.map(d => ({ ...d }));
+
+        // Container que recebe zoom/pan
+        const g = svg.append("g");
+
+        // Zoom + Pan (scroll para zoom, arrastar para mover)
+        const zoom = d3.zoom()
+          .scaleExtent([0.2, 4])
+          .on("zoom", (e) => g.attr("transform", e.transform));
+        svg.call(zoom);
+
         const sim = d3.forceSimulation(nodes)
-          .force("link", d3.forceLink(links).id(d => d.id).distance(95))
-          .force("charge", d3.forceManyBody().strength(-280))
+          .force("link", d3.forceLink(links).id(d => d.id).distance(110))
+          .force("charge", d3.forceManyBody().strength(-350))
           .force("center", d3.forceCenter(width / 2, height / 2))
-          .force("collide", d3.forceCollide().radius(32));
+          .force("collide", d3.forceCollide().radius(40));
+
         const defs = svg.append("defs");
         defs.append("marker").attr("id", "arrow").attr("viewBox", "0 -5 10 10")
-          .attr("refX", 22).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6)
+          .attr("refX", 24).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6)
           .attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#484f58");
-        const link = svg.append("g").selectAll("line").data(links).join("line")
+
+        const link = g.append("g").selectAll("line").data(links).join("line")
           .attr("stroke", "#484f58").attr("stroke-width", 1.5).attr("marker-end", "url(#arrow)");
-        const linkLabel = svg.append("g").selectAll("text").data(links).join("text")
-          .text(d => d.label).attr("font-size", 9).attr("fill", "#6e7681");
-        const node = svg.append("g").selectAll("circle").data(nodes).join("circle")
-          .attr("r", d => d.category === "unknown" ? 13 : 17)
+
+        const linkLabel = g.append("g").selectAll("text").data(links).join("text")
+          .text(d => d.label).attr("font-size", 9).attr("fill", "#6e7681")
+          .attr("text-anchor", "middle");
+
+        const isInitial = (d) => d.id === initialWallet;
+
+        const node = g.append("g").selectAll("circle").data(nodes).join("circle")
+          .attr("r", d => isInitial(d) ? 22 : (d.category === "unknown" ? 13 : 17))
           .attr("fill", d => CATEGORY_COLORS[d.category] || "#8b949e")
-          .attr("stroke", "#0d1117").attr("stroke-width", 2).style("cursor", "pointer")
+          .attr("stroke", d => isInitial(d) ? "#e6edf3" : "#0d1117")
+          .attr("stroke-width", d => isInitial(d) ? 3 : 2)
+          .style("cursor", "pointer")
           .call(d3.drag()
             .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
             .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
             .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
-        node.append("title").text(d => `${d.id}\n${d.category} (score ${d.risk_score})`);
-        const label = svg.append("g").selectAll("text").data(nodes).join("text")
-          .attr("class", "node-label").attr("text-anchor", "middle").attr("dy", 28).text(d => d.label);
+
+        // Tooltip melhorado
+        node.append("title").text(d =>
+          `${d.id}\nCategoria: ${d.category}\nScore: ${d.risk_score}` +
+          (isInitial(d) ? "\n★ Carteira investigada" : ""));
+
+        // Anel extra na carteira inicial
+        const initialRing = g.append("g").selectAll("circle.ring")
+          .data(nodes.filter(isInitial)).join("circle")
+          .attr("r", 28).attr("fill", "none")
+          .attr("stroke", "#e6edf3").attr("stroke-width", 1).attr("stroke-dasharray", "3,3")
+          .attr("opacity", 0.5);
+
+        const label = g.append("g").selectAll("text").data(nodes).join("text")
+          .attr("class", "node-label").attr("text-anchor", "middle")
+          .attr("dy", d => isInitial(d) ? 36 : 28)
+          .attr("font-weight", d => isInitial(d) ? "700" : "400")
+          .attr("fill", d => isInitial(d) ? "#e6edf3" : "#8b949e")
+          .text(d => d.label);
+
         sim.on("tick", () => {
           link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-          linkLabel.attr("x", d => (d.source.x + d.target.x) / 2).attr("y", d => (d.source.y + d.target.y) / 2);
+          linkLabel.attr("x", d => (d.source.x + d.target.x) / 2).attr("y", d => (d.source.y + d.target.y) / 2 - 4);
           node.attr("cx", d => d.x).attr("cy", d => d.y);
+          initialRing.attr("cx", d => d.x).attr("cy", d => d.y);
           label.attr("x", d => d.x).attr("y", d => d.y);
         });
-      }, [data]);
+      }, [data, initialWallet]);
       return <svg id="graph" ref={ref}></svg>;
     }
 
@@ -461,7 +499,7 @@
                     <div>
                       <div className="card">
                         <h2>Grafo de Transações</h2>
-                        <ForceGraph data={graph} />
+                        <ForceGraph data={graph} initialWallet={result.wallet_address} />
                         <div className="legend">
                           {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
                             <div className="legend-item" key={cat}>

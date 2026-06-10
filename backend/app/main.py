@@ -32,6 +32,8 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://crypto_user:REMOVED_DEV_PASSWORD@postgres:5432/crypto_tracker")
 INTEL_PROVIDER = os.getenv("INTEL_PROVIDER", "mock")  # "mock" ou "blockstream"
+# CORS: origens permitidas (separadas por virgula no .env)
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
 
 class SubmitIOCRequest(BaseModel):
@@ -65,7 +67,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs", redoc_url="/redoc",
 )
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
 ioc_service = IOCIntakeService(redis_host=REDIS_HOST, redis_port=REDIS_PORT)
