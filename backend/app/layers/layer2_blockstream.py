@@ -9,11 +9,21 @@ from typing import Dict, List
 SATOSHI = 100_000_000
 
 KNOWN_ADDRESSES = {
-    # WannaCry ransomware (2017) - enderecos confirmados por Sophos, NJCCIC,
-    # Secureworks CTU, MyCERT. Fontes publicas de threat intelligence.
+    # ====================================================================
+    # IOCs reais de threat intelligence. Fontes publicas confiaveis.
+    # Expanda esta lista com indicadores de relatorios OSINT/MISP/OFAC.
+    # ====================================================================
+
+    # WannaCry ransomware (2017)
+    # Fontes: Sophos, NJCCIC, Secureworks CTU, MyCERT
     "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94": {"category": "ransomware", "label": "WannaCry"},
     "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw": {"category": "ransomware", "label": "WannaCry"},
     "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn": {"category": "ransomware", "label": "WannaCry"},
+
+    # SamSam ransomware (facilitadores de lavagem - 1as wallets sancionadas pela OFAC, 2018)
+    # Fontes: US Treasury/OFAC SDN List, FDD, WilmerHale, Akin Gump
+    "149w62rY42aZBox8fGcmqNsXUzSStKeq8C": {"category": "ransomware", "label": "SamSam (OFAC SDN)"},
+    "1AjZPMsnmpdK2Rv9KQNfMurTXinscVro9V": {"category": "ransomware", "label": "SamSam (OFAC SDN)"},
 }
 
 CATEGORY_RISK_LEVEL = {
