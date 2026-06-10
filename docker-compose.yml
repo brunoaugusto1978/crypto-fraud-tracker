@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   neo4j:
     image: neo4j:5.14-community
     container_name: crypto-tracker-neo4j
     environment:
-      NEO4J_AUTH: neo4j/REMOVED_DEV_PASSWORD
+      NEO4J_AUTH: ${NEO4J_AUTH}
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -13,7 +11,6 @@ services:
       - neo4j_data:/var/lib/neo4j/data
     networks:
       - crypto-tracker
-
   redis:
     image: redis:7-alpine
     container_name: crypto-tracker-redis
@@ -23,33 +20,35 @@ services:
       - redis_data:/data
     networks:
       - crypto-tracker
-
   postgres:
     image: postgres:15-alpine
     container_name: crypto-tracker-postgres
     environment:
-      POSTGRES_USER: crypto_user
-      POSTGRES_PASSWORD: REMOVED_DEV_PASSWORD
-      POSTGRES_DB: crypto_tracker
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - crypto-tracker
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: crypto-tracker-backend
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: REMOVED_DEV_PASSWORD
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      INTEL_PROVIDER: blockstream
+      NEO4J_URI: ${NEO4J_URI}
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      POSTGRES_URL: ${POSTGRES_URL}
+      INTEL_PROVIDER: ${INTEL_PROVIDER}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES}
     ports:
       - "8000:8000"
     depends_on:
@@ -58,7 +57,6 @@ services:
       - postgres
     networks:
       - crypto-tracker
-
   frontend:
     build:
       context: ./frontend
@@ -68,13 +66,11 @@ services:
       - "3000:80"
     networks:
       - crypto-tracker
-
 volumes:
   neo4j_data:
   neo4j_logs:
   redis_data:
   postgres_data:
-
 networks:
   crypto-tracker:
     driver: bridge

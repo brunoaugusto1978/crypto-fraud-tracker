@@ -5,7 +5,9 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.auth import AuthService
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -46,6 +48,17 @@ class InvestigateRequest(BaseModel):
     depth: int = 3
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 app = FastAPI(
     title="Crypto Fraud Tracker API",
     description="Sistema de rastreamento de fraudes em Bitcoin - 5 camadas",
@@ -67,6 +80,18 @@ correlation_engine = CorrelationEngine()
 cluster_analyzer = ClusterAnalyzer(correlation_engine)
 report_gen = ReportGenerator()
 investigation_scorer = InvestigationScorer()
+auth_service = AuthService()
+security = HTTPBearer(auto_error=False)
+
+
+# ---- Dependency: exige token JWT valido ----
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Token ausente")
+    payload = auth_service.decode_token(credentials.credentials)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Token invalido ou expirado")
+    return {"username": payload.get("sub"), "role": payload.get("role")}
 
 neo4j_conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 graph_service = None
@@ -118,14 +143,14 @@ async def queue_status():
 
 
 @app.get("/api/v1/blockchain/enrich/{wallet_address}")
-async def enrich_wallet(wallet_address: str):
+async def enrich_wallet(wallet_address: str, current_user: dict = Depends(get_current_user)):
     if not IOCValidator.validate_bitcoin_address(wallet_address):
         raise HTTPException(status_code=400, detail="Endereço Bitcoin inválido")
     return await blockchain_intel.enrich_wallet(wallet_address)
 
 
 @app.get("/api/v1/blockchain/classify/{wallet_address}")
-async def classify_wallet(wallet_address: str):
+async def classify_wallet(wallet_address: str, current_user: dict = Depends(get_current_user)):
     if not IOCValidator.validate_bitcoin_address(wallet_address):
         raise HTTPException(status_code=400, detail="Endereço Bitcoin inválido")
     category = await blockchain_intel.classify_wallet(wallet_address)
@@ -133,7 +158,7 @@ async def classify_wallet(wallet_address: str):
 
 
 @app.get("/api/v1/risk/score/{wallet_address}")
-async def risk_score(wallet_address: str):
+async def risk_score(wallet_address: str, current_user: dict = Depends(get_current_user)):
     enrichment = await blockchain_intel.enrich_wallet(wallet_address)
     return correlation_engine.calculate_risk_score(enrichment, {})
 
@@ -144,7 +169,7 @@ async def list_rules():
 
 
 @app.post("/api/v1/investigate")
-async def investigate(req: InvestigateRequest):
+async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_current_user)):
     if not IOCValidator.validate_bitcoin_address(req.wallet_address):
         raise HTTPException(status_code=400, detail="Endereço Bitcoin inválido")
     investigation_id = f"inv_{datetime.utcnow().timestamp()}"
@@ -207,7 +232,7 @@ async def investigate(req: InvestigateRequest):
 
 
 @app.get("/api/v1/investigation/{investigation_id}")
-async def get_investigation(investigation_id: str):
+async def get_investigation(investigation_id: str, current_user: dict = Depends(get_current_user)):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
@@ -229,7 +254,7 @@ async def get_investigation(investigation_id: str):
 
 
 @app.get("/api/v1/report/{investigation_id}/summary")
-async def report_summary(investigation_id: str):
+async def report_summary(investigation_id: str, current_user: dict = Depends(get_current_user)):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
@@ -241,7 +266,7 @@ async def report_summary(investigation_id: str):
 
 
 @app.get("/api/v1/report/{investigation_id}/timeline")
-async def report_timeline(investigation_id: str):
+async def report_timeline(investigation_id: str, current_user: dict = Depends(get_current_user)):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
@@ -250,7 +275,7 @@ async def report_timeline(investigation_id: str):
 
 
 @app.get("/api/v1/report/{investigation_id}/graph")
-async def report_graph(investigation_id: str):
+async def report_graph(investigation_id: str, current_user: dict = Depends(get_current_user)):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
@@ -278,19 +303,45 @@ async def report_html(investigation_id: str):
 
 
 @app.get("/api/v1/graph/high-risk")
-async def graph_high_risk(min_score: float = 50):
+async def graph_high_risk(min_score: float = 50, current_user: dict = Depends(get_current_user)):
     gs = get_graph_service()
     return {"wallets": gs.get_high_risk_wallets(min_score)}
 
 
 @app.get("/api/v1/graph/recipients/{wallet_address}")
-async def graph_recipients(wallet_address: str, depth: int = 3):
+async def graph_recipients(wallet_address: str, depth: int = 3, current_user: dict = Depends(get_current_user)):
     gs = get_graph_service()
     return {"recipients": gs.find_recipients(wallet_address, depth)}
 
 
+@app.post("/api/v1/auth/register")
+async def register(req: RegisterRequest):
+    try:
+        user = auth_service.create_user(req.username, req.password, req.email)
+        token = auth_service.create_token(user["username"], user["role"])
+        return {"status": "registered", "username": user["username"],
+                "role": user["role"], "access_token": token, "token_type": "bearer"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/auth/login")
+async def login(req: LoginRequest):
+    user = auth_service.authenticate(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario ou senha invalidos")
+    token = auth_service.create_token(user["username"], user["role"])
+    return {"status": "ok", "username": user["username"], "role": user["role"],
+            "access_token": token, "token_type": "bearer"}
+
+
+@app.get("/api/v1/auth/me")
+async def me(current_user: dict = Depends(get_current_user)):
+    return current_user
+
+
 @app.get("/api/v1/investigations/recent")
-async def list_recent_investigations(limit: int = 50):
+async def list_recent_investigations(limit: int = 50, current_user: dict = Depends(get_current_user)):
     """Lista investigacoes persistidas (historico)."""
     return {"investigations": investigations.list_recent(limit),
             "total": investigations.count()}

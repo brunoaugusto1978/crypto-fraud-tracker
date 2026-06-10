@@ -15,7 +15,11 @@
       padding: 20px 32px; display: flex; align-items: center; gap: 12px; }
     .header h1 { font-size: 22px; font-weight: 600; }
     .header .badge { background: #1f6feb; color: white; font-size: 11px; padding: 3px 8px; border-radius: 12px; font-weight: 600; }
-    .header .count { margin-left: auto; font-size: 13px; color: #8b949e; }
+    .header .spacer { margin-left: auto; }
+    .header .user-chip { font-size: 13px; color: #8b949e; display: flex; align-items: center; gap: 10px; }
+    .header .logout { background: #21262d; border: 1px solid #30363d; color: #e6edf3; padding: 6px 14px;
+      border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .header .logout:hover { background: #30363d; }
     .container { max-width: 1500px; margin: 0 auto; padding: 24px 32px; }
     .search-bar { display: flex; gap: 12px; margin-bottom: 12px; }
     .search-bar input { flex: 1; background: #161b22; border: 1px solid #30363d; color: #e6edf3;
@@ -75,6 +79,24 @@
     .history-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .history-crime { color: #8b949e; }
     .history-empty { color: #6e7681; font-size: 12px; text-align: center; padding: 20px 10px; }
+    /* Login */
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .login-card { background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 40px;
+      width: 100%; max-width: 400px; }
+    .login-logo { text-align: center; margin-bottom: 8px; font-size: 32px; }
+    .login-card h1 { font-size: 22px; text-align: center; margin-bottom: 6px; }
+    .login-card .sub { text-align: center; color: #8b949e; font-size: 13px; margin-bottom: 28px; }
+    .login-field { margin-bottom: 16px; }
+    .login-field label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 6px; }
+    .login-field input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+      padding: 12px 14px; border-radius: 8px; font-size: 14px; }
+    .login-field input:focus { outline: none; border-color: #1f6feb; }
+    .login-btn { width: 100%; background: #238636; color: white; border: none; padding: 13px;
+      border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    .login-btn:hover { background: #2ea043; }
+    .login-btn:disabled { background: #30363d; cursor: not-allowed; }
+    .login-toggle { text-align: center; margin-top: 20px; font-size: 13px; color: #8b949e; }
+    .login-toggle a { color: #58a6ff; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -91,6 +113,83 @@
     };
     const LEVEL_COLORS = { critical: "#f85149", high: "#fb8500", medium: "#d29922", low: "#3fb950" };
 
+    // Token em memória (módulo). Não usa localStorage.
+    let AUTH_TOKEN = null;
+    function authHeaders() {
+      return AUTH_TOKEN ? { "Authorization": `Bearer ${AUTH_TOKEN}` } : {};
+    }
+
+    // ---------- LOGIN ----------
+    function LoginScreen({ onAuth }) {
+      const [mode, setMode] = useState("login"); // login | register
+      const [username, setUsername] = useState("");
+      const [password, setPassword] = useState("");
+      const [email, setEmail] = useState("");
+      const [error, setError] = useState(null);
+      const [loading, setLoading] = useState(false);
+
+      async function submit() {
+        if (!username.trim() || !password.trim()) { setError("Preencha usuário e senha"); return; }
+        setLoading(true); setError(null);
+        try {
+          const endpoint = mode === "login" ? "/api/v1/auth/login" : "/api/v1/auth/register";
+          const body = mode === "login"
+            ? { username, password }
+            : { username, password, email: email || null };
+          const res = await fetch(`${API}${endpoint}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Falha na autenticação");
+          onAuth(data.access_token, { username: data.username, role: data.role });
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      return (
+        <div className="login-wrap">
+          <div className="login-card">
+            <div className="login-logo">🔍</div>
+            <h1>Crypto Fraud Tracker</h1>
+            <div className="sub">{mode === "login" ? "Entre na sua conta" : "Crie sua conta"}</div>
+            {error && <div className="error">⚠️ {error}</div>}
+            <div className="login-field">
+              <label>Usuário</label>
+              <input value={username} onChange={e => setUsername(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submit()} placeholder="seu_usuario" />
+            </div>
+            {mode === "register" && (
+              <div className="login-field">
+                <label>Email (opcional)</label>
+                <input value={email} onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && submit()} placeholder="email@exemplo.com" />
+              </div>
+            )}
+            <div className="login-field">
+              <label>Senha</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submit()} placeholder="••••••••" />
+            </div>
+            <button className="login-btn" onClick={submit} disabled={loading}>
+              {loading ? "Aguarde..." : (mode === "login" ? "Entrar" : "Registrar")}
+            </button>
+            <div className="login-toggle">
+              {mode === "login" ? (
+                <span>Não tem conta? <a onClick={() => { setMode("register"); setError(null); }}>Registre-se</a></span>
+              ) : (
+                <span>Já tem conta? <a onClick={() => { setMode("login"); setError(null); }}>Entrar</a></span>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ---------- GRAFO ----------
     function ForceGraph({ data }) {
       const ref = useRef();
       useEffect(() => {
@@ -209,7 +308,8 @@
       );
     }
 
-    function App() {
+    // ---------- DASHBOARD ----------
+    function Dashboard({ user, onLogout }) {
       const [wallet, setWallet] = useState("");
       const [depth, setDepth] = useState(3);
       const [loading, setLoading] = useState(false);
@@ -222,14 +322,20 @@
       const [activeId, setActiveId] = useState(null);
 
       const examples = [
-        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+        "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94",
         "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
         "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
       ];
 
+      async function apiGet(path) {
+        const res = await fetch(`${API}${path}`, { headers: authHeaders() });
+        if (res.status === 401) { onLogout(); throw new Error("Sessão expirada"); }
+        return res.json();
+      }
+
       async function loadHistory() {
         try {
-          const r = await fetch(`${API}/api/v1/investigations/recent`).then(r => r.json());
+          const r = await apiGet("/api/v1/investigations/recent");
           setHistory(r.investigations || []);
           setTotal(r.total || 0);
         } catch (e) {}
@@ -239,8 +345,8 @@
 
       async function loadReports(invId) {
         const [g, t] = await Promise.all([
-          fetch(`${API}/api/v1/report/${invId}/graph`).then(r => r.json()),
-          fetch(`${API}/api/v1/report/${invId}/timeline`).then(r => r.json()),
+          apiGet(`/api/v1/report/${invId}/graph`),
+          apiGet(`/api/v1/report/${invId}/timeline`),
         ]);
         setGraph(g);
         setTimeline(t.timeline);
@@ -252,9 +358,11 @@
         setLoading(true); setError(null); setResult(null); setGraph(null); setTimeline(null);
         try {
           const res = await fetch(`${API}/api/v1/investigate`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
             body: JSON.stringify({ wallet_address: target, depth: parseInt(depth) }),
           });
+          if (res.status === 401) { onLogout(); return; }
           if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Erro na investigação"); }
           const data = await res.json();
           setResult(data);
@@ -268,7 +376,7 @@
         setLoading(true); setError(null); setResult(null); setGraph(null); setTimeline(null);
         setActiveId(invId);
         try {
-          const data = await fetch(`${API}/api/v1/investigation/${invId}`).then(r => r.json());
+          const data = await apiGet(`/api/v1/investigation/${invId}`);
           setResult(data);
           setWallet(data.wallet_address || "");
           await loadReports(invId);
@@ -281,7 +389,11 @@
             <span style={{ fontSize: 24 }}>🔍</span>
             <h1>Crypto Fraud Tracker</h1>
             <span className="badge">v2.0</span>
-            <span className="count">{total} investigações salvas</span>
+            <span className="spacer"></span>
+            <div className="user-chip">
+              <span>{total} salvas · 👤 {user.username} ({user.role})</span>
+              <button className="logout" onClick={onLogout}>Sair</button>
+            </div>
           </div>
           <div className="container">
             <div className="search-bar">
@@ -340,6 +452,26 @@
           </div>
         </div>
       );
+    }
+
+    // ---------- APP (controla auth) ----------
+    function App() {
+      const [authed, setAuthed] = useState(false);
+      const [user, setUser] = useState(null);
+
+      function handleAuth(token, userInfo) {
+        AUTH_TOKEN = token;
+        setUser(userInfo);
+        setAuthed(true);
+      }
+      function handleLogout() {
+        AUTH_TOKEN = null;
+        setUser(null);
+        setAuthed(false);
+      }
+
+      if (!authed) return <LoginScreen onAuth={handleAuth} />;
+      return <Dashboard user={user} onLogout={handleLogout} />;
     }
 
     ReactDOM.createRoot(document.getElementById("root")).render(<App />);
