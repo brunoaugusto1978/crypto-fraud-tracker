@@ -263,6 +263,33 @@
               ))}
             </div>
           )}
+          {result.wallet_intel && result.wallet_intel.source && (
+            <div style={{ marginTop: 16 }}>
+              <h2 style={{ marginBottom: 8 }}>
+                Inteligência da Carteira
+                <span style={{ fontSize: 10, color: result.wallet_intel.source === "blockstream" ? "#3fb950" : "#8b949e", marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>
+                  {result.wallet_intel.source === "blockstream" ? "● dados reais" : "● mock"}
+                </span>
+              </h2>
+              {result.wallet_intel.labeled_as && (
+                <div className="explanation" style={{ borderLeftColor: "#f85149", marginTop: 0, marginBottom: 12 }}>
+                  🏷️ Identificada como: <b>{result.wallet_intel.labeled_as}</b>
+                </div>
+              )}
+              {result.wallet_intel.balance_btc != null && (
+                <div className="metric-row"><span className="label">Saldo atual</span><span className="value">{result.wallet_intel.balance_btc} BTC</span></div>
+              )}
+              {result.wallet_intel.total_received_btc != null && (
+                <div className="metric-row"><span className="label">Total recebido</span><span className="value">{result.wallet_intel.total_received_btc} BTC</span></div>
+              )}
+              {result.wallet_intel.total_sent_btc != null && (
+                <div className="metric-row"><span className="label">Total enviado</span><span className="value">{result.wallet_intel.total_sent_btc} BTC</span></div>
+              )}
+              {result.wallet_intel.transactions_count != null && (
+                <div className="metric-row"><span className="label">Nº transações</span><span className="value">{result.wallet_intel.transactions_count}</span></div>
+              )}
+            </div>
+          )}
         </div>
       );
     }

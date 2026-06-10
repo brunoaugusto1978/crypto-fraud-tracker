@@ -109,6 +109,22 @@ def get_graph_service():
     return graph_service
 
 
+def _extract_wallet_intel(enr: dict) -> dict:
+    """Extrai os dados reais de inteligencia da carteira (Blockstream)."""
+    if not enr:
+        return {}
+    return {
+        "source": enr.get("source", "mock"),
+        "category": enr.get("category"),
+        "labeled_as": enr.get("labeled_as"),
+        "confidence": enr.get("confidence"),
+        "balance_btc": enr.get("balance_btc"),
+        "total_received_btc": enr.get("total_received_btc"),
+        "total_sent_btc": enr.get("total_sent_btc"),
+        "transactions_count": enr.get("transactions_count"),
+    }
+
+
 @app.get("/api/v1/health")
 async def health_check():
     services = {"ioc_intake": "ready", "blockchain_intelligence": "ready",
@@ -228,6 +244,7 @@ async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_
             "dangerous_destinations": scoring["dangerous_destinations"],
             "explanation": scoring["explanation"],
             "suspected_crime": cluster.get("suspected_crime"),
+            "wallet_intel": _extract_wallet_intel(enrichments.get(req.wallet_address, {})),
             "neo4j": neo4j_status, "report_ready": True}
 
 
@@ -249,6 +266,7 @@ async def get_investigation(investigation_id: str, current_user: dict = Depends(
             "dangerous_destinations": scoring.get("dangerous_destinations", []),
             "explanation": scoring.get("explanation", ""),
             "suspected_crime": inv["cluster_analysis"].get("suspected_crime"),
+            "wallet_intel": _extract_wallet_intel(inv.get("enrichments", {}).get(inv["initial_wallet"], {})),
             "neo4j": "persisted", "report_ready": True,
             "created_at": inv["created_at"]}
 
