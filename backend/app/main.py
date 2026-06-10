@@ -5,12 +5,12 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.auth import AuthService
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.layers.layer1_ioc_intake import IOCIntakeService, IOCValidator
 from app.layers.layer2_blockchain_intelligence import (
@@ -27,11 +27,18 @@ from app.layers.db_store import InvestigationStore
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "REMOVED_DEV_PASSWORD")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://crypto_user:REMOVED_DEV_PASSWORD@postgres:5432/crypto_tracker")
+POSTGRES_URL = os.getenv("POSTGRES_URL")
 INTEL_PROVIDER = os.getenv("INTEL_PROVIDER", "mock")  # "mock" ou "blockstream"
+ENV = os.getenv("ENV", "dev")  # "dev" ou "prod"
+
+# Fail-safe: credenciais criticas sao obrigatorias (nao usar defaults inseguros)
+if not NEO4J_PASSWORD:
+    raise RuntimeError("NEO4J_PASSWORD ausente. Defina no .env.")
+if not POSTGRES_URL:
+    raise RuntimeError("POSTGRES_URL ausente. Defina no .env.")
 # CORS: origens permitidas (separadas por virgula no .env)
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
@@ -47,7 +54,7 @@ class SubmitIOCRequest(BaseModel):
 class InvestigateRequest(BaseModel):
     wallet_address: str
     case_name: Optional[str] = None
-    depth: int = 3
+    depth: int = Field(3, ge=1, le=5)  # limite seguro: 1..5
 
 
 class RegisterRequest(BaseModel):
@@ -65,10 +72,18 @@ app = FastAPI(
     title="Crypto Fraud Tracker API",
     description="Sistema de rastreamento de fraudes em Bitcoin - 5 camadas",
     version="2.0.0",
-    docs_url="/docs", redoc_url="/redoc",
+    docs_url=None if ENV == "prod" else "/docs",
+    redoc_url=None if ENV == "prod" else "/redoc",
 )
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+# Em producao: credenciais desligadas e metodos/headers restritos.
+# Como usamos JWT via header Authorization (nao cookies), nao precisamos de credentials.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 ioc_service = IOCIntakeService(redis_host=REDIS_HOST, redis_port=REDIS_PORT)
 if INTEL_PROVIDER == "blockstream":
@@ -94,6 +109,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if payload is None:
         raise HTTPException(status_code=401, detail="Token invalido ou expirado")
     return {"username": payload.get("sub"), "role": payload.get("role")}
+
+
+# ---- Dependency: exige usuario admin ----
+def require_admin(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
+    return current_user
 
 neo4j_conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 graph_service = None
@@ -306,7 +328,7 @@ async def report_graph(investigation_id: str, current_user: dict = Depends(get_c
 
 
 @app.get("/api/v1/report/{investigation_id}/html", response_class=HTMLResponse)
-async def report_html(investigation_id: str):
+async def report_html(investigation_id: str, current_user: dict = Depends(get_current_user)):
     if investigation_id not in investigations:
         raise HTTPException(status_code=404, detail="Investigação não encontrada")
     inv = investigations[investigation_id]
@@ -329,18 +351,42 @@ async def graph_high_risk(min_score: float = 50, current_user: dict = Depends(ge
 
 
 @app.get("/api/v1/graph/recipients/{wallet_address}")
-async def graph_recipients(wallet_address: str, depth: int = 3, current_user: dict = Depends(get_current_user)):
+async def graph_recipients(wallet_address: str, depth: int = Query(3, ge=1, le=5), current_user: dict = Depends(get_current_user)):
     gs = get_graph_service()
     return {"recipients": gs.find_recipients(wallet_address, depth)}
 
 
 @app.post("/api/v1/auth/register")
-async def register(req: RegisterRequest):
+async def register(
+    req: RegisterRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """
+    Bootstrap de admin:
+    - Se NAO ha usuarios ainda, o 1o registro vira 'admin' (sem exigir token).
+    - Se ja existem usuarios, registrar exige um admin autenticado.
+    """
+    is_first_user = auth_service.count_users() == 0
+
+    if is_first_user:
+        role = "admin"
+    else:
+        # Exige token de admin
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="Token ausente (registro exige admin)")
+        payload = auth_service.decode_token(credentials.credentials)
+        if payload is None:
+            raise HTTPException(status_code=401, detail="Token invalido ou expirado")
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Apenas administradores podem registrar usuarios")
+        role = "analyst"
+
     try:
-        user = auth_service.create_user(req.username, req.password, req.email)
+        user = auth_service.create_user(req.username, req.password, req.email, role=role)
         token = auth_service.create_token(user["username"], user["role"])
         return {"status": "registered", "username": user["username"],
-                "role": user["role"], "access_token": token, "token_type": "bearer"}
+                "role": user["role"], "access_token": token, "token_type": "bearer",
+                "bootstrap_admin": is_first_user}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

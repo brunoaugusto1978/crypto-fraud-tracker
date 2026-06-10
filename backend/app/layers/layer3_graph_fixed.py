@@ -64,6 +64,7 @@ class GraphDatabaseService:
                                      'amount_btc': amount_btc, 'txid': txid, 'timestamp': timestamp})
 
     def find_recipients(self, address, depth=3):
+        depth = max(1, min(int(depth), 5))  # limite seguro: 1..5
         query = f"""
         MATCH path = (start:Wallet {{address: $address}})-[:SENDS_TO*1..{depth}]->(recipient:Wallet)
         RETURN DISTINCT recipient.address AS address, recipient.category AS category,
