@@ -386,20 +386,27 @@ class ClusterAnalyzer:
             'money_laundering': 0,
             'fraud': 0
         }
-        
+
         for wallet in wallets:
-            if wallet.get('category') == 'ransomware':
+            cat = wallet.get('category')
+            if cat == 'ransomware':
                 crime_indicators['ransomware'] += 30
-            elif wallet.get('category') == 'scam':
+            elif cat == 'scam':
                 crime_indicators['scam'] += 30
-            elif wallet.get('category') == 'mixer':
+            elif cat == 'darknet':
+                crime_indicators['money_laundering'] += 25
+            elif cat == 'mixer':
                 crime_indicators['money_laundering'] += 20
-        
-        # Padrão: múltiplos remetentes → scam
+
+        # Padrao: muitos remetentes pode indicar scam de coleta
         if len(wallets) > 20:
-            crime_indicators['scam'] += 20
-            crime_indicators['fraud'] += 15
-        
+            crime_indicators['scam'] += 10
+
+        # Se nenhum indicador pontuou, nao ha crime evidente
+        # (evita retornar 'ransomware' por ser o 1o do dict)
+        if max(crime_indicators.values()) == 0:
+            return 'indeterminado'
+
         return max(crime_indicators, key=crime_indicators.get)
     
     @staticmethod

@@ -9,7 +9,11 @@ from typing import Dict, List
 SATOSHI = 100_000_000
 
 KNOWN_ADDRESSES = {
-    # "endereco": {"category": "ransomware", "label": "LockBit"},
+    # WannaCry ransomware (2017) - enderecos confirmados por Sophos, NJCCIC,
+    # Secureworks CTU, MyCERT. Fontes publicas de threat intelligence.
+    "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94": {"category": "ransomware", "label": "WannaCry"},
+    "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw": {"category": "ransomware", "label": "WannaCry"},
+    "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn": {"category": "ransomware", "label": "WannaCry"},
 }
 
 CATEGORY_RISK_LEVEL = {
@@ -20,11 +24,24 @@ CATEGORY_RISK_LEVEL = {
 
 
 class BlockstreamIntelligence:
-    def __init__(self, base_url="https://blockstream.info/api", known_addresses=None):
+    def __init__(self, base_url="https://blockstream.info/api", known_addresses=None, cache_ttl=300):
         self.base_url = base_url.rstrip("/")
         self.known = dict(KNOWN_ADDRESSES)
         if known_addresses:
             self.known.update(known_addresses)
+        self._cache = {}          # {url: (timestamp, data)}
+        self._cache_ttl = cache_ttl
+
+    def _cache_get(self, url):
+        import time
+        entry = self._cache.get(url)
+        if entry and (time.time() - entry[0]) < self._cache_ttl:
+            return entry[1]
+        return None
+
+    def _cache_set(self, url, data):
+        import time
+        self._cache[url] = (time.time(), data)
 
     def _classify(self, address, tx_count=0):
         if address in self.known:
@@ -38,10 +55,13 @@ class BlockstreamIntelligence:
 
     async def enrich_wallet(self, wallet_address):
         url = f"{self.base_url}/address/{wallet_address}"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+        data = self._cache_get(url)
+        if data is None:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            self._cache_set(url, data)
         chain = data.get("chain_stats", {})
         mempool = data.get("mempool_stats", {})
         funded = chain.get("funded_txo_sum", 0)
@@ -62,10 +82,13 @@ class BlockstreamIntelligence:
 
     async def get_wallet_history(self, wallet_address, limit=25):
         url = f"{self.base_url}/address/{wallet_address}/txs"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            txs = resp.json()
+        txs = self._cache_get(url)
+        if txs is None:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                txs = resp.json()
+            self._cache_set(url, txs)
         history = []
         for tx in txs[:limit]:
             vouts = tx.get("vout", [])
