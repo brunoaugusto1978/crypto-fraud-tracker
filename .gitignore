@@ -50,3 +50,6 @@ report_*.html
 *.bak
 files.zip
 .pytest_cache/
+.env.backup
+.env.*.backup
+*.backup

@@ -126,6 +126,87 @@ class AuthService:
         conn.close()
         return n
 
+    # ---- gerenciamento de conta propria ----
+    def update_email(self, username, new_email):
+        try:
+            conn = self._connect()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    UPDATE users SET email = %s WHERE username = %s
+                    RETURNING id, username, email, role, created_at
+                """, (new_email, username))
+                user = cur.fetchone()
+            conn.close()
+            return dict(user) if user else None
+        except psycopg2.errors.UniqueViolation:
+            raise ValueError("email ja esta em uso")
+
+    def change_password(self, username, current_password, new_password):
+        # Verifica a senha atual
+        user = self.get_user(username)
+        if not user:
+            raise ValueError("usuario nao encontrado")
+        if not self.verify_password(current_password, user["password_hash"]):
+            raise ValueError("senha atual incorreta")
+        # Valida a nova senha
+        ok, erro = validate_password_strength(new_password)
+        if not ok:
+            raise ValueError(erro)
+        new_hash = self.hash_password(new_password)
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash = %s WHERE username = %s",
+                        (new_hash, username))
+        conn.close()
+        return True
+
+    # ---- gerenciamento de usuarios (admin) ----
+    def list_users(self):
+        conn = self._connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, username, email, role, created_at
+                FROM users ORDER BY created_at ASC
+            """)
+            rows = cur.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("created_at"):
+                d["created_at"] = str(d["created_at"])
+            result.append(d)
+        return result
+
+    def update_role(self, user_id, new_role):
+        if new_role not in ("admin", "analyst"):
+            raise ValueError("role invalido (use admin ou analyst)")
+        conn = self._connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE users SET role = %s WHERE id = %s
+                RETURNING id, username, email, role
+            """, (new_role, user_id))
+            user = cur.fetchone()
+        conn.close()
+        return dict(user) if user else None
+
+    def delete_user(self, user_id):
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,))
+            deleted = cur.fetchone()
+        conn.close()
+        return deleted is not None
+
+    def count_admins(self):
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            n = cur.fetchone()[0]
+        conn.close()
+        return n
+
     @staticmethod
     def create_token(username, role="analyst"):
         expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)

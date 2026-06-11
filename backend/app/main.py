@@ -68,6 +68,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UpdateEmailRequest(BaseModel):
+    email: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str
+
+
 app = FastAPI(
     title="Crypto Fraud Tracker API",
     description="Sistema de rastreamento de fraudes em Bitcoin - 5 camadas",
@@ -411,6 +424,57 @@ async def list_recent_investigations(limit: int = 50, current_user: dict = Depen
     """Lista investigacoes persistidas (historico)."""
     return {"investigations": investigations.list_recent(limit),
             "total": investigations.count()}
+
+
+# ---- Conta propria ----
+@app.patch("/api/v1/auth/me/email")
+async def update_my_email(req: UpdateEmailRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        user = auth_service.update_email(current_user["username"], req.email)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+        return {"status": "updated", "email": user["email"]}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/auth/change-password")
+async def change_my_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        auth_service.change_password(current_user["username"], req.current_password, req.new_password)
+        return {"status": "password_changed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---- Painel admin ----
+@app.get("/api/v1/admin/users")
+async def admin_list_users(admin: dict = Depends(require_admin)):
+    return {"users": auth_service.list_users(), "total": auth_service.count_users()}
+
+
+@app.patch("/api/v1/admin/users/{user_id}/role")
+async def admin_update_role(user_id: int, req: UpdateRoleRequest, admin: dict = Depends(require_admin)):
+    try:
+        user = auth_service.update_role(user_id, req.role)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+        return {"status": "role_updated", "user": user}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/v1/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+    # Protecao: nao permitir deletar o ultimo admin
+    users = auth_service.list_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+    if target["role"] == "admin" and auth_service.count_admins() <= 1:
+        raise HTTPException(status_code=400, detail="Nao e possivel remover o ultimo admin")
+    ok = auth_service.delete_user(user_id)
+    return {"status": "deleted" if ok else "not_found", "user_id": user_id}
 
 
 @app.get("/")

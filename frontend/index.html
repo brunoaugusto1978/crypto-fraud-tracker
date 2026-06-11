@@ -97,6 +97,42 @@
     .login-btn:disabled { background: #30363d; cursor: not-allowed; }
     .login-toggle { text-align: center; margin-top: 20px; font-size: 13px; color: #8b949e; }
     .login-toggle a { color: #58a6ff; cursor: pointer; }
+
+    /* Modais (conta + admin) */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      width: 100%; max-width: 440px; max-height: 85vh; overflow-y: auto; }
+    .modal-wide { max-width: 760px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center;
+      padding: 20px 24px; border-bottom: 1px solid #30363d; }
+    .modal-header h2 { font-size: 16px; }
+    .modal-close { background: none; border: none; color: #8b949e; font-size: 26px;
+      cursor: pointer; line-height: 1; }
+    .modal-close:hover { color: #e6edf3; }
+    .modal-tabs { display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid #30363d; }
+    .modal-tabs button { background: none; border: none; color: #8b949e; padding: 8px 14px;
+      cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+    .modal-tabs button.active { color: #e6edf3; border-bottom-color: #1f6feb; }
+    .modal-body { padding: 24px; }
+    .modal-msg { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .modal-msg.ok { background: #12261e; border: 1px solid #3fb950; color: #56d364; }
+    .modal-msg.err { background: #2d1418; border: 1px solid #f85149; color: #ff7b72; }
+    .header-btn { background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .header-btn:hover { background: #30363d; }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .admin-table th { text-align: left; color: #8b949e; font-weight: 600; padding: 8px;
+      border-bottom: 1px solid #30363d; text-transform: uppercase; font-size: 11px; }
+    .admin-table td { padding: 10px 8px; border-bottom: 1px solid #21262d; }
+    .role-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .role-admin { background: #1f6feb33; color: #58a6ff; }
+    .role-analyst { background: #8b949e22; color: #8b949e; }
+    .role-select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+      padding: 4px 8px; border-radius: 6px; font-size: 12px; margin-right: 8px; }
+    .del-btn { background: #2d1418; border: 1px solid #f85149; color: #ff7b72;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .del-btn:hover { background: #3d1a1f; }
   </style>
 </head>
 <body>
@@ -385,6 +421,8 @@
       const [history, setHistory] = useState([]);
       const [total, setTotal] = useState(0);
       const [activeId, setActiveId] = useState(null);
+      const [showAccount, setShowAccount] = useState(false);
+      const [showAdmin, setShowAdmin] = useState(false);
 
       const examples = [
         "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94",
@@ -450,6 +488,8 @@
 
       return (
         <div>
+          {showAccount && <AccountModal user={user} onClose={() => setShowAccount(false)} />}
+          {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} onLogout={onLogout} />}
           <div className="header">
             <span style={{ fontSize: 24 }}>🔍</span>
             <h1>Crypto Fraud Tracker</h1>
@@ -457,6 +497,10 @@
             <span className="spacer"></span>
             <div className="user-chip">
               <span>{total} salvas · 👤 {user.username} ({user.role})</span>
+              {user.role === "admin" && (
+                <button className="header-btn" onClick={() => setShowAdmin(true)}>Admin</button>
+              )}
+              <button className="header-btn" onClick={() => setShowAccount(true)}>Minha Conta</button>
               <button className="logout" onClick={onLogout}>Sair</button>
             </div>
           </div>
@@ -513,6 +557,177 @@
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ---------- MODAL: MINHA CONTA ----------
+    function AccountModal({ user, onClose }) {
+      const [tab, setTab] = useState("perfil");
+      const [email, setEmail] = useState("");
+      const [curPass, setCurPass] = useState("");
+      const [newPass, setNewPass] = useState("");
+      const [msg, setMsg] = useState(null);
+      const [err, setErr] = useState(null);
+
+      async function saveEmail() {
+        setMsg(null); setErr(null);
+        try {
+          const res = await fetch(`${API}/api/v1/auth/me/email`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ email }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Erro");
+          setMsg("Email atualizado para " + data.email);
+        } catch (e) { setErr(e.message); }
+      }
+
+      async function savePassword() {
+        setMsg(null); setErr(null);
+        try {
+          const res = await fetch(`${API}/api/v1/auth/change-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ current_password: curPass, new_password: newPass }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Erro");
+          setMsg("Senha alterada com sucesso");
+          setCurPass(""); setNewPass("");
+        } catch (e) { setErr(e.message); }
+      }
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Minha Conta</h2>
+              <button className="modal-close" onClick={onClose}>×</button>
+            </div>
+            <div className="modal-tabs">
+              <button className={tab === "perfil" ? "active" : ""} onClick={() => { setTab("perfil"); setMsg(null); setErr(null); }}>Perfil</button>
+              <button className={tab === "email" ? "active" : ""} onClick={() => { setTab("email"); setMsg(null); setErr(null); }}>Email</button>
+              <button className={tab === "senha" ? "active" : ""} onClick={() => { setTab("senha"); setMsg(null); setErr(null); }}>Senha</button>
+            </div>
+            <div className="modal-body">
+              {msg && <div className="modal-msg ok">{msg}</div>}
+              {err && <div className="modal-msg err">⚠️ {err}</div>}
+
+              {tab === "perfil" && (
+                <div>
+                  <div className="metric-row"><span className="label">Usuário</span><span className="value">{user.username}</span></div>
+                  <div className="metric-row"><span className="label">Papel</span><span className="value">{user.role}</span></div>
+                </div>
+              )}
+              {tab === "email" && (
+                <div>
+                  <div className="login-field">
+                    <label>Novo email</label>
+                    <input value={email} onChange={e => setEmail(e.target.value)} placeholder="novo@email.com" />
+                  </div>
+                  <button className="btn" onClick={saveEmail}>Salvar email</button>
+                </div>
+              )}
+              {tab === "senha" && (
+                <div>
+                  <div className="login-field">
+                    <label>Senha atual</label>
+                    <input type="password" value={curPass} onChange={e => setCurPass(e.target.value)} />
+                  </div>
+                  <div className="login-field">
+                    <label>Nova senha (12+ char, maiúscula, número, especial)</label>
+                    <input type="password" value={newPass} onChange={e => setNewPass(e.target.value)} />
+                  </div>
+                  <button className="btn" onClick={savePassword}>Alterar senha</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ---------- PAINEL ADMIN ----------
+    function AdminPanel({ onClose, onLogout }) {
+      const [users, setUsers] = useState([]);
+      const [err, setErr] = useState(null);
+      const [msg, setMsg] = useState(null);
+
+      async function load() {
+        setErr(null);
+        try {
+          const res = await fetch(`${API}/api/v1/admin/users`, { headers: authHeaders() });
+          if (res.status === 401) { onLogout(); return; }
+          if (res.status === 403) { setErr("Acesso restrito a administradores"); return; }
+          const data = await res.json();
+          setUsers(data.users || []);
+        } catch (e) { setErr(e.message); }
+      }
+      useEffect(() => { load(); }, []);
+
+      async function changeRole(id, role) {
+        setMsg(null); setErr(null);
+        try {
+          const res = await fetch(`${API}/api/v1/admin/users/${id}/role`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ role }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Erro");
+          setMsg("Papel atualizado"); load();
+        } catch (e) { setErr(e.message); }
+      }
+
+      async function removeUser(id, username) {
+        if (!confirm(`Remover o usuário ${username}?`)) return;
+        setMsg(null); setErr(null);
+        try {
+          const res = await fetch(`${API}/api/v1/admin/users/${id}`, {
+            method: "DELETE", headers: authHeaders(),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Erro");
+          setMsg("Usuário removido"); load();
+        } catch (e) { setErr(e.message); }
+      }
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Painel Admin — Usuários</h2>
+              <button className="modal-close" onClick={onClose}>×</button>
+            </div>
+            <div className="modal-body">
+              {msg && <div className="modal-msg ok">{msg}</div>}
+              {err && <div className="modal-msg err">⚠️ {err}</div>}
+              <table className="admin-table">
+                <thead>
+                  <tr><th>ID</th><th>Usuário</th><th>Email</th><th>Papel</th><th>Ações</th></tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td>{u.id}</td>
+                      <td>{u.username}</td>
+                      <td>{u.email || "—"}</td>
+                      <td><span className={`role-badge role-${u.role}`}>{u.role}</span></td>
+                      <td>
+                        <select value={u.role} onChange={e => changeRole(u.id, e.target.value)} className="role-select">
+                          <option value="analyst">analyst</option>
+                          <option value="admin">admin</option>
+                        </select>
+                        <button className="del-btn" onClick={() => removeUser(u.id, u.username)}>Remover</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
