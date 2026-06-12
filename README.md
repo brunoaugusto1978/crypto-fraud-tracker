@@ -92,17 +92,18 @@ docker-compose exec backend python -m pytest tests/ -v
 
 ## Seguranca
 
-- Senhas com hash bcrypt (salt unico)
-- JWT com expiracao; secret obrigatorio via .env
-- Politica de senha forte (12+ char, maiuscula, minuscula, numero, especial)
-- Controle de acesso por papel (admin/analyst); registro restrito a admin
-- Rotas de dados protegidas por token
-- Queries PostgreSQL parametrizadas (anti SQL-injection)
-- CORS restrito (sem credentials; usa header Authorization)
-- Bancos fechados ao host (so rede interna do Docker)
-- Limite de profundidade nas consultas (anti-DoS)
-- Swagger/ReDoc escondidos em producao (ENV=prod)
-- Segredos fora do codigo (.env nao versionado)
+- Senhas armazenadas com hash bcrypt e salt único;
+- JWT com expiração e segredo obrigatório via .env;
+- Política de senha forte, exigindo 12+ caracteres, maiúscula, minúscula, número e caractere especial;
+- Controle de acesso por papel, com perfis admin e analyst;
+- Registro de novos usuários restrito a administradores após o bootstrap inicial;
+- Rotas de dados protegidas por token;
+- Uso de queries PostgreSQL parametrizadas para mitigação de SQL injection;
+- CORS restrito, sem uso de credentials, utilizando header Authorization;
+- Bancos configurados para comunicação pela rede interna do Docker;
+- Limite de profundidade nas consultas para reduzir risco de abuso e DoS lógico;
+- Swagger e ReDoc desabilitados em produção quando ENV=prod;
+- Segredos mantidos fora do código-fonte, com .env não versionado.
 
 ### Production Checklist
 
@@ -128,11 +129,17 @@ docker-compose exec backend python -m pytest tests/ -v
 
 ## Aviso Legal
 
-Ferramenta para uso legitimo em compliance, deteccao de fraude, investigacao autorizada e pesquisa em seguranca. Respeitar a legislacao de privacidade. Os IOCs sao de fontes publicas (OFAC, CISA, relatorios de seguranca).
+Esta ferramenta é disponibilizada para fins legítimos de compliance, detecção de fraude, OSINT, investigação autorizada, pesquisa em segurança e apoio analítico. O uso deve respeitar a legislação aplicável, políticas institucionais, privacidade, proteção de dados e cadeia de custódia quando aplicável.
+
+O projeto não realiza atribuição automática de autoria, não substitui análise pericial formal e não deve ser utilizado para perseguição, exposição indevida de pessoas, acesso não autorizado ou qualquer finalidade ilícita.
 
 ## Licenca
 
-A definir
+Este projeto está licenciado sob a Apache License 2.0.
+
+A redistribuição, uso, modificação e integração em outras plataformas são permitidos nos termos da licença, desde que sejam preservados os avisos de copyright, os créditos do autor, a referência ao projeto original e o arquivo de licença correspondente.
+
+Consulte o arquivo LICENSE para mais detalhes.
 
 ---
 Versao: 3.0.0 | Autenticado, testado (28 testes) e com dados reais da blockchain
