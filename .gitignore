@@ -56,3 +56,4 @@ files.zip
 
 # Generated intelligence feed outputs
 backend/data/address_intelligence.generated.json
+backend/data/address_intelligence.ofac.generated.json
