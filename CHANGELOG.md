@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.2.0 - Automatic Risk Enrichment
+
+### Added
+- File-based address intelligence provider configured by `ADDRESS_INTEL_FILE`.
+- Example external watchlist feed under `backend/data/address_intelligence.example.json`.
+- Automatic wallet classification using external/provider-backed intelligence.
+- Tests for address enrichment and Blockstream provider integration.
+- Documentation for automatic risk enrichment.
+
+### Changed
+- Unknown wallet intelligence now returns `risk_level=unknown` instead of assuming low risk.
+- Known scam wallet rule now scores high-risk threshold.
+- Backend Docker image now copies `backend/data` into `/app/data`.
+
+### Security
+- Reduces dependency on hardcoded wallet classifications.
+- Preserves source, confidence and raw hash metadata from external intelligence matches.
+
+
 ## v3.1.0 - AML Investigation Hardening
 
 ### Added
