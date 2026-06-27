@@ -92,7 +92,7 @@ class RuleFactory:
             rule_id='rule_scam_001',
             name='Known Scam Wallet',
             description='Carteira está listada em banco de dados de scams',
-            weight=40.0,
+            weight=50.0,
             condition=lambda enrichment: enrichment.get('category') == 'scam'
         )
     
@@ -221,13 +221,16 @@ class CorrelationEngine:
         # Normalizar score para 0-100
         risk_score = min(100.0, total_score)
         
-        # Determinar nível de risco
+        # Determinar nível de risco.
+        # Important: absence of external intelligence is not evidence of low risk.
         if risk_score >= 80:
             risk_level = 'critical'
         elif risk_score >= 50:
             risk_level = 'high'
         elif risk_score >= 25:
             risk_level = 'medium'
+        elif wallet_enrichment.get('intelligence_status') == 'no_external_label_found':
+            risk_level = 'unknown'
         else:
             risk_level = 'low'
         
@@ -238,6 +241,9 @@ class CorrelationEngine:
             'risk_level': risk_level,
             'triggered_rules': triggered_rules,
             'evidence': evidence,
+            'intelligence_status': wallet_enrichment.get('intelligence_status'),
+            'intelligence_matches': wallet_enrichment.get('intelligence_matches', []),
+            'confidence': wallet_enrichment.get('confidence', 0.0),
             'calculated_at': datetime.utcnow().isoformat() + 'Z'
         }
     

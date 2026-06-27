@@ -1,0 +1,15 @@
+{
+  "source_name": "example_external_watchlist",
+  "description": "Example address intelligence feed. Replace with OFAC/MISP/abuse-provider exports in production.",
+  "items": [
+    {
+      "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+      "asset": "BTC",
+      "category": "scam",
+      "label": "Twitter 2020 BTC scam wallet",
+      "source_ref": "public incident reference",
+      "confidence": 0.85,
+      "first_seen": "2020-07-15"
+    }
+  ]
+}

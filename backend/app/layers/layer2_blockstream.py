@@ -6,6 +6,7 @@ import httpx
 from datetime import datetime, timezone
 from typing import Dict, List
 from app.layers.evidence import sha256_payload, utc_now_iso
+from app.layers.address_enrichment import FileAddressIntelligenceProvider, classification_from_matches
 
 SATOSHI = 100_000_000
 
@@ -46,6 +47,7 @@ class BlockstreamIntelligence:
             self.known.update(known_addresses)
         self._cache = {}          # {url: (timestamp, data)}
         self._cache_ttl = cache_ttl
+        self.address_intel_provider = FileAddressIntelligenceProvider()
 
     def _cache_get(self, url):
         import time
@@ -59,14 +61,58 @@ class BlockstreamIntelligence:
         self._cache[url] = (time.time(), data)
 
     def _classify(self, address, tx_count=0):
+        # Provider-backed intelligence comes first. This avoids relying only on
+        # hardcoded Python indicators and allows external feeds to drive risk.
+        external_matches = self.address_intel_provider.lookup_address(address, asset="BTC")
+        if external_matches:
+            return classification_from_matches(address, external_matches)
+
+        # Legacy local indicators remain as a fallback, but are explicitly
+        # marked as local_static_ioc so the source is transparent.
         if address in self.known:
             entry = self.known[address]
             cat = entry.get("category", "unknown")
-            return {"category": cat, "label": entry.get("label"),
-                    "risk_level": CATEGORY_RISK_LEVEL.get(cat, "low")}
+            return {
+                "category": cat,
+                "label": entry.get("label"),
+                "risk_level": CATEGORY_RISK_LEVEL.get(cat, "low"),
+                "risk_score_hint": 90 if cat == "ransomware" else 75,
+                "confidence": 0.95,
+                "intelligence_status": "matched",
+                "intelligence_matches": [{
+                    "address": address,
+                    "asset": "BTC",
+                    "category": cat,
+                    "label": entry.get("label"),
+                    "source_name": "local_static_ioc",
+                    "source_ref": "legacy_known_addresses",
+                    "confidence": 0.95,
+                    "raw_payload": entry,
+                }],
+            }
+
+        # Behavioral heuristic: high-volume addresses may be services/exchanges.
         if tx_count > 5000:
-            return {"category": "exchange", "label": "alto volume (heuristica)", "risk_level": "low"}
-        return {"category": "unknown", "label": None, "risk_level": "low"}
+            return {
+                "category": "exchange",
+                "label": "alto volume (heuristica)",
+                "risk_level": "low",
+                "risk_score_hint": 10,
+                "confidence": 0.4,
+                "intelligence_status": "behavioral_heuristic_only",
+                "intelligence_matches": [],
+            }
+
+        # Important: lack of intelligence is not evidence of low risk.
+        return {
+            "category": "unknown",
+            "label": None,
+            "risk_level": "unknown",
+            "risk_score_hint": 0,
+            "confidence": 0.0,
+            "intelligence_status": "no_external_label_found",
+            "intelligence_matches": [],
+        }
 
     async def _get_json(self, url: str):
         data = self._cache_get(url)
@@ -92,10 +138,13 @@ class BlockstreamIntelligence:
         return {
             "wallet": wallet_address, "category": cls["category"],
             "risk_level": cls["risk_level"],
-            "confidence": 1.0 if wallet_address in self.known else 0.5,
+            "confidence": cls.get("confidence", 0.0),
             "source": "blockstream", "source_url": url,
             "raw_sha256": sha256_payload(data),
-            "labeled_as": cls["label"],
+            "labeled_as": cls.get("label"),
+            "intelligence_status": cls.get("intelligence_status"),
+            "intelligence_matches": cls.get("intelligence_matches", []),
+            "risk_score_hint": cls.get("risk_score_hint", 0),
             "transactions_count": tx_count,
             "balance_btc": round(balance_btc, 8),
             "total_received_btc": round(funded / SATOSHI, 8),
