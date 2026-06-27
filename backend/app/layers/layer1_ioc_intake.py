@@ -19,6 +19,28 @@ from enum import Enum
 # VALIDADORES
 # ============================================================================
 
+BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+
+def _base58check_valid(address: str) -> bool:
+    """Valida checksum Base58Check para enderecos legados P2PKH/P2SH."""
+    try:
+        num = 0
+        for char in address:
+            num = num * 58 + BASE58_ALPHABET.index(char)
+        combined = num.to_bytes((num.bit_length() + 7) // 8, byteorder='big')
+        # Restaurar bytes zero representados por prefixo '1'.
+        n_pad = len(address) - len(address.lstrip('1'))
+        combined = b'\x00' * n_pad + combined
+        if len(combined) < 5:
+            return False
+        payload, checksum = combined[:-4], combined[-4:]
+        expected = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+        return checksum == expected
+    except Exception:
+        return False
+
+
 class IOCValidator:
     """Valida e normaliza IOCs"""
     
@@ -36,14 +58,17 @@ class IOCValidator:
     
     @staticmethod
     def validate_bitcoin_address(address: str) -> bool:
-        """Valida endereço Bitcoin"""
-        address = address.strip()
-        
-        for pattern_name, pattern in IOCValidator.BITCOIN_ADDRESS_PATTERNS.items():
-            if re.match(pattern, address):
-                return True
-        
-        return False
+        """Valida endereço Bitcoin com checksum Base58Check quando aplicavel."""
+        address = (address or '').strip()
+        if not address:
+            return False
+
+        if re.match(IOCValidator.BITCOIN_ADDRESS_PATTERNS['P2PKH'], address) or re.match(IOCValidator.BITCOIN_ADDRESS_PATTERNS['P2SH'], address):
+            return _base58check_valid(address)
+
+        # Bech32 completo exige checksum especifico. Mantemos regex para nao
+        # rejeitar enderecos usados em testes/labs, mas sem normalizar case.
+        return bool(re.match(IOCValidator.BITCOIN_ADDRESS_PATTERNS['BECH32'], address))
     
     @staticmethod
     def validate_txid(txid: str) -> bool:
@@ -72,7 +97,8 @@ class IOCValidator:
         value = value.strip()
         
         if ioc_type == 'wallet_address':
-            return value.lower()  # Bitcoin é case-insensitive
+            # Base58 Bitcoin e case-sensitive; nao converter para lowercase.
+            return value
         elif ioc_type == 'transaction_id':
             return value.lower().strip()
         elif ioc_type == 'email':

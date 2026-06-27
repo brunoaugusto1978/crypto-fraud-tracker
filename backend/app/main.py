@@ -24,6 +24,7 @@ from app.layers.layer5_report_generator import (
 )
 from app.layers.investigation_scorer import InvestigationScorer
 from app.layers.db_store import InvestigationStore
+from app.layers.evidence import build_evidence_record, utc_now_iso
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
@@ -31,14 +32,18 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 POSTGRES_URL = os.getenv("POSTGRES_URL")
-INTEL_PROVIDER = os.getenv("INTEL_PROVIDER", "mock")  # "mock" ou "blockstream"
 ENV = os.getenv("ENV", "dev")  # "dev" ou "prod"
+INTEL_PROVIDER = os.getenv("INTEL_PROVIDER") or ("mock" if ENV != "prod" else "")  # "mock" ou "blockstream"
 
 # Fail-safe: credenciais criticas sao obrigatorias (nao usar defaults inseguros)
 if not NEO4J_PASSWORD:
     raise RuntimeError("NEO4J_PASSWORD ausente. Defina no .env.")
 if not POSTGRES_URL:
     raise RuntimeError("POSTGRES_URL ausente. Defina no .env.")
+if INTEL_PROVIDER not in {"mock", "blockstream"}:
+    raise RuntimeError("INTEL_PROVIDER invalido ou ausente. Use 'blockstream' ou 'mock'.")
+if ENV == "prod" and INTEL_PROVIDER == "mock":
+    raise RuntimeError("INTEL_PROVIDER=mock nao e permitido em producao.")
 # CORS: origens permitidas (separadas por virgula no .env)
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
@@ -162,6 +167,17 @@ def _extract_wallet_intel(enr: dict) -> dict:
     }
 
 
+def _get_investigation_or_404(investigation_id: str, current_user: dict) -> dict:
+    inv = investigations.get_for_user(
+        investigation_id=investigation_id,
+        username=current_user["username"],
+        role=current_user.get("role", "analyst"),
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigação não encontrada")
+    return inv
+
+
 @app.get("/api/v1/health")
 async def health_check():
     services = {"ioc_intake": "ready", "blockchain_intelligence": "ready",
@@ -182,7 +198,7 @@ async def health_check():
 
 
 @app.post("/api/v1/ioc/submit")
-async def submit_ioc(req: SubmitIOCRequest):
+async def submit_ioc(req: SubmitIOCRequest, current_user: dict = Depends(get_current_user)):
     result = ioc_service.submit_ioc(value=req.value, ioc_type=req.ioc_type,
                                     source=req.source, confidence=req.confidence, notes=req.notes)
     if result["status"] == "rejected":
@@ -191,7 +207,7 @@ async def submit_ioc(req: SubmitIOCRequest):
 
 
 @app.get("/api/v1/ioc/queue-status")
-async def queue_status():
+async def queue_status(current_user: dict = Depends(require_admin)):
     return ioc_service.get_queue_status()
 
 
@@ -217,7 +233,7 @@ async def risk_score(wallet_address: str, current_user: dict = Depends(get_curre
 
 
 @app.get("/api/v1/risk/rules")
-async def list_rules():
+async def list_rules(current_user: dict = Depends(get_current_user)):
     return {"rules": correlation_engine.get_rules()}
 
 
@@ -225,20 +241,44 @@ async def list_rules():
 async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_current_user)):
     if not IOCValidator.validate_bitcoin_address(req.wallet_address):
         raise HTTPException(status_code=400, detail="Endereço Bitcoin inválido")
+
     investigation_id = f"inv_{datetime.utcnow().timestamp()}"
-    chain = await blockchain_service.trace_transaction_chain(req.wallet_address, depth=req.depth)
+    trace = await blockchain_service.trace_transaction_chain(req.wallet_address, depth=req.depth)
+    chain = trace["wallets"]
     wallets = [item["wallet"] for item in chain]
     enrichments = {item["wallet"]: item["enrichment"] for item in chain}
-    transactions = []
-    for i in range(len(wallets) - 1):
-        transactions.append({"from_address": wallets[i], "to_address": wallets[i + 1],
-                             "amount_btc": round(0.5 * (i + 1), 4),
-                             "timestamp": datetime.utcnow().isoformat() + "Z"})
+    transactions = trace.get("transactions", [])
+    raw_transactions = trace.get("raw_transactions", [])
+
+    evidence_records = []
+    for wallet, enrichment in enrichments.items():
+        evidence_records.append(build_evidence_record(
+            investigation_id=investigation_id,
+            evidence_type="wallet_enrichment",
+            source_name=enrichment.get("source", INTEL_PROVIDER),
+            source_url=enrichment.get("source_url"),
+            subject=wallet,
+            raw_payload=enrichment.get("raw_payload", enrichment),
+            collected_by=current_user["username"],
+        ))
+    for tx in raw_transactions:
+        evidence_records.append(build_evidence_record(
+            investigation_id=investigation_id,
+            evidence_type="blockchain_transaction",
+            source_name=tx.get("source", INTEL_PROVIDER),
+            source_url=tx.get("source_url"),
+            subject=tx.get("txid") or req.wallet_address,
+            raw_payload=tx.get("raw_payload", tx),
+            collected_by=current_user["username"],
+        ))
+
     risk_scores = []
     for w in wallets:
-        score = correlation_engine.calculate_risk_score(enrichments.get(w, {}), {})
+        wallet_txs = [t for t in transactions if t.get("from_address") == w or t.get("to_address") == w]
+        score = correlation_engine.calculate_risk_score(enrichments.get(w, {}), {"recent_transactions": wallet_txs})
         score["wallet"] = w
         risk_scores.append(score)
+
     scoring = investigation_scorer.score_investigation(
         initial_wallet=req.wallet_address,
         wallets=wallets,
@@ -249,6 +289,7 @@ async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_
         cluster_id=investigation_id,
         wallets=[{"address": w, **enrichments.get(w, {})} for w in wallets],
         transactions=transactions)
+
     neo4j_status = "skipped"
     try:
         gs = get_graph_service()
@@ -258,21 +299,39 @@ async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_
             gs.add_wallet(w, enr.get("category", "unknown"),
                           enr.get("risk_level", "low"), sc.get("risk_score", 0))
         for tx in transactions:
-            gs.add_transaction(tx["from_address"], tx["to_address"],
-                               tx["amount_btc"], timestamp=tx["timestamp"])
+            gs.add_transaction(tx.get("from_address"), tx.get("to_address"),
+                               tx.get("amount_btc", 0), txid=tx.get("txid"),
+                               timestamp=tx.get("timestamp"),
+                               evidence_hash=tx.get("raw_sha256"),
+                               source=tx.get("source"))
         neo4j_status = "persisted"
     except HTTPException:
         neo4j_status = "neo4j_offline"
     except Exception as e:
         neo4j_status = f"error: {e}"
-    investigations[investigation_id] = {
-        "id": investigation_id, "initial_wallet": req.wallet_address,
-        "wallets": wallets, "enrichments": enrichments, "transactions": transactions,
-        "risk_scores": risk_scores, "cluster_analysis": cluster, "scoring": scoring,
-        "created_at": datetime.utcnow().isoformat() + "Z"}
+
+    investigation_data = {
+        "id": investigation_id,
+        "case_name": req.case_name,
+        "owner_username": current_user["username"],
+        "initial_wallet": req.wallet_address,
+        "wallets": wallets,
+        "enrichments": enrichments,
+        "transactions": transactions,
+        "raw_transactions": raw_transactions,
+        "evidence_records": evidence_records,
+        "risk_scores": risk_scores,
+        "cluster_analysis": cluster,
+        "scoring": scoring,
+        "created_at": utc_now_iso(),
+    }
+    investigations[investigation_id] = investigation_data
+    investigations.save_evidence_records(investigation_id, evidence_records)
+
     return {"investigation_id": investigation_id, "status": "completed",
             "wallet_address": req.wallet_address, "wallets_found": len(wallets),
             "transactions_traced": len(transactions),
+            "evidence_count": len(evidence_records),
             "overall_risk_score": scoring["overall_risk_score"],
             "risk_level": scoring["risk_level"],
             "initial_wallet_score": scoring["initial_wallet_score"],
@@ -281,20 +340,22 @@ async def investigate(req: InvestigateRequest, current_user: dict = Depends(get_
             "dangerous_destinations": scoring["dangerous_destinations"],
             "explanation": scoring["explanation"],
             "suspected_crime": cluster.get("suspected_crime"),
+            "aml_typologies": cluster.get("aml_typologies", []),
             "wallet_intel": _extract_wallet_intel(enrichments.get(req.wallet_address, {})),
             "neo4j": neo4j_status, "report_ready": True}
 
 
 @app.get("/api/v1/investigation/{investigation_id}")
 async def get_investigation(investigation_id: str, current_user: dict = Depends(get_current_user)):
-    if investigation_id not in investigations:
-        raise HTTPException(status_code=404, detail="Investigação não encontrada")
-    inv = investigations[investigation_id]
+    inv = _get_investigation_or_404(investigation_id, current_user)
     scoring = inv.get("scoring", {})
     return {"investigation_id": investigation_id, "status": "completed",
+            "case_name": inv.get("case_name"),
+            "owner_username": inv.get("owner_username"),
             "wallet_address": inv["initial_wallet"],
             "wallets_found": len(inv["wallets"]),
             "transactions_traced": len(inv["transactions"]),
+            "evidence_count": len(inv.get("evidence_records", [])),
             "overall_risk_score": scoring.get("overall_risk_score", 0),
             "risk_level": scoring.get("risk_level", "low"),
             "initial_wallet_score": scoring.get("initial_wallet_score", 0),
@@ -303,6 +364,7 @@ async def get_investigation(investigation_id: str, current_user: dict = Depends(
             "dangerous_destinations": scoring.get("dangerous_destinations", []),
             "explanation": scoring.get("explanation", ""),
             "suspected_crime": inv["cluster_analysis"].get("suspected_crime"),
+            "aml_typologies": inv["cluster_analysis"].get("aml_typologies", []),
             "wallet_intel": _extract_wallet_intel(inv.get("enrichments", {}).get(inv["initial_wallet"], {})),
             "neo4j": "persisted", "report_ready": True,
             "created_at": inv["created_at"]}
@@ -310,9 +372,7 @@ async def get_investigation(investigation_id: str, current_user: dict = Depends(
 
 @app.get("/api/v1/report/{investigation_id}/summary")
 async def report_summary(investigation_id: str, current_user: dict = Depends(get_current_user)):
-    if investigation_id not in investigations:
-        raise HTTPException(status_code=404, detail="Investigação não encontrada")
-    inv = investigations[investigation_id]
+    inv = _get_investigation_or_404(investigation_id, current_user)
     return report_gen.generate_investigation_report(
         investigation_id=investigation_id, initial_wallet=inv["initial_wallet"],
         wallets=[{"address": w} for w in inv["wallets"]], transactions=inv["transactions"],
@@ -322,18 +382,14 @@ async def report_summary(investigation_id: str, current_user: dict = Depends(get
 
 @app.get("/api/v1/report/{investigation_id}/timeline")
 async def report_timeline(investigation_id: str, current_user: dict = Depends(get_current_user)):
-    if investigation_id not in investigations:
-        raise HTTPException(status_code=404, detail="Investigação não encontrada")
-    inv = investigations[investigation_id]
+    inv = _get_investigation_or_404(investigation_id, current_user)
     tg = TimelineGenerator()
     return {"timeline": tg.generate_timeline(inv["transactions"], inv["enrichments"])}
 
 
 @app.get("/api/v1/report/{investigation_id}/graph")
 async def report_graph(investigation_id: str, current_user: dict = Depends(get_current_user)):
-    if investigation_id not in investigations:
-        raise HTTPException(status_code=404, detail="Investigação não encontrada")
-    inv = investigations[investigation_id]
+    inv = _get_investigation_or_404(investigation_id, current_user)
     gv = GraphVisualizer()
     return gv.generate_graph_data(
         wallets=[{"address": w} for w in inv["wallets"]],
@@ -342,9 +398,7 @@ async def report_graph(investigation_id: str, current_user: dict = Depends(get_c
 
 @app.get("/api/v1/report/{investigation_id}/html", response_class=HTMLResponse)
 async def report_html(investigation_id: str, current_user: dict = Depends(get_current_user)):
-    if investigation_id not in investigations:
-        raise HTTPException(status_code=404, detail="Investigação não encontrada")
-    inv = investigations[investigation_id]
+    inv = _get_investigation_or_404(investigation_id, current_user)
     report = report_gen.generate_investigation_report(
         investigation_id=investigation_id, initial_wallet=inv["initial_wallet"],
         wallets=[{"address": w} for w in inv["wallets"]], transactions=inv["transactions"],
@@ -422,8 +476,8 @@ async def me(current_user: dict = Depends(get_current_user)):
 @app.get("/api/v1/investigations/recent")
 async def list_recent_investigations(limit: int = 50, current_user: dict = Depends(get_current_user)):
     """Lista investigacoes persistidas (historico)."""
-    return {"investigations": investigations.list_recent(limit),
-            "total": investigations.count()}
+    return {"investigations": investigations.list_recent(limit, current_user["username"], current_user.get("role", "analyst")),
+            "total": investigations.count(current_user["username"], current_user.get("role", "analyst"))}
 
 
 # ---- Conta propria ----

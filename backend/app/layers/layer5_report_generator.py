@@ -10,6 +10,7 @@ Responsável por:
 from typing import List, Dict, Optional
 from datetime import datetime
 import json
+from html import escape
 from io import BytesIO
 
 # ============================================================================
@@ -366,8 +367,16 @@ class ReportGenerator:
         report: Dict,
         graph_html: str
     ) -> str:
-        """Gera relatório HTML interativo"""
-        
+        '''Gera relatório HTML interativo com escape de campos dinâmicos.'''
+        safe_report_id = escape(str(report.get('report_id', '')))
+        safe_investigation_date = escape(str(report.get('investigation_date', '')))
+        safe_initial_wallet = escape(str(report.get('initial_wallet', '')))
+        risk_class = escape(str(report.get('risk_assessment', 'low')).lower().replace('/', '_'))
+        wallets_discovered = int(report.get('wallets_discovered') or 0)
+        transactions_traced = int(report.get('transactions_traced') or 0)
+        total_volume_btc = float(report.get('total_volume_btc') or 0)
+        average_risk_score = float(report.get('average_risk_score') or 0)
+
         html = f'''
         <!DOCTYPE html>
         <html>
@@ -389,7 +398,6 @@ class ReportGenerator:
                 .timeline-item {{ margin-bottom: 20px; padding-left: 30px; position: relative; }}
                 .timeline-item:before {{ content: ""; position: absolute; left: 0; top: 0; width: 2px; height: 100%; background: #ccc; }}
                 .timeline-item .dot {{ position: absolute; left: -8px; top: 0; width: 12px; height: 12px; background: #4CAF50; border-radius: 50%; border: 2px solid white; }}
-                .finding {{ margin: 10px 0; padding: 10px; background: #f5f5f5; border-left: 3px solid #4CAF50; }}
                 .recommendation {{ margin: 10px 0; padding: 10px; background: #e8f5e9; border-left: 3px solid #4CAF50; }}
                 table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
                 th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
@@ -400,74 +408,78 @@ class ReportGenerator:
         <body>
             <div class="container">
                 <h1>📊 Investigação de Fraude em Bitcoin</h1>
-                
+
                 <div style="margin: 20px 0;">
                     <div class="metric">
                         <div class="metric-label">Relatório ID</div>
-                        <div class="metric-value">{report['report_id'][:12]}...</div>
+                        <div class="metric-value">{safe_report_id[:12]}...</div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Wallets Rastreadas</div>
-                        <div class="metric-value">{report['wallets_discovered']}</div>
+                        <div class="metric-value">{wallets_discovered}</div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Transações</div>
-                        <div class="metric-value">{report['transactions_traced']}</div>
+                        <div class="metric-value">{transactions_traced}</div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Volume (BTC)</div>
-                        <div class="metric-value">{report['total_volume_btc']:.2f}</div>
+                        <div class="metric-value">{total_volume_btc:.2f}</div>
                     </div>
-                    <div class="metric risk-{report['risk_assessment'].lower().replace('/', '_')}">
+                    <div class="metric risk-{risk_class}">
                         <div class="metric-label">Score de Risco</div>
-                        <div class="metric-value">{report['average_risk_score']:.1f}/100</div>
+                        <div class="metric-value">{average_risk_score:.1f}/100</div>
                     </div>
                 </div>
-                
+
                 <h2>📋 Sumário Executivo</h2>
-                <p><strong>Data:</strong> {report['investigation_date']}</p>
-                <p><strong>Carteira Inicial:</strong> <code>{report['initial_wallet']}</code></p>
+                <p><strong>Data:</strong> {safe_investigation_date}</p>
+                <p><strong>Carteira Inicial:</strong> <code>{safe_initial_wallet}</code></p>
                 <h3>Principais Descobertas:</h3>
                 <ul>
         '''
-        
-        for finding in report['executive_summary']['key_findings']:
-            html += f'<li>{finding}</li>\n'
-        
+
+        for finding in report.get('executive_summary', {}).get('key_findings', []):
+            html += f'<li>{escape(str(finding))}</li>\n'
+
         html += '''
                 </ul>
-                
+
                 <h2>⏱️ Timeline de Transações</h2>
                 <div class="timeline">
         '''
-        
-        for event in report['timeline'][:10]:  # Primeiros 10 eventos
+
+        for event in report.get('timeline', [])[:10]:
+            event_type = escape(str(event.get('event_type', '')).upper())
+            description = escape(str(event.get('description', '')))
+            timestamp = escape(str(event.get('timestamp', '')))
+            amount = float(event.get('amount_btc') or 0)
             html += f'''
                     <div class="timeline-item">
                         <div class="dot"></div>
-                        <strong>{event['event_type'].upper()}</strong>
-                        <p>{event['description']}</p>
-                        <small>💰 {event['amount_btc']:.8f} BTC | 📅 {event['timestamp']}</small>
+                        <strong>{event_type}</strong>
+                        <p>{description}</p>
+                        <small>💰 {amount:.8f} BTC | 📅 {timestamp}</small>
                     </div>
             '''
-        
+
         html += '''
                 </div>
-                
+
                 <h2>🎯 Recomendações</h2>
         '''
-        
-        for rec in report['recommendations']:
-            html += f'<div class="recommendation">{rec}</div>\n'
-        
+
+        for rec in report.get('recommendations', []):
+            html += f'<div class="recommendation">{escape(str(rec))}</div>\n'
+
         html += '''
                 <h2>🔗 Visualização de Grafo</h2>
                 <p>Clique e arraste os nós para explorar as relações entre carteiras.</p>
         '''
-        
-        # Inserir grafo HTML
+
+        # graph_html is generated internally from structured graph data.
         html += graph_html
-        
+
         html += '''
                 <hr>
                 <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; color: #777; font-size: 12px;">
@@ -478,9 +490,9 @@ class ReportGenerator:
         </body>
         </html>
         '''
-        
+
         return html
-    
+
     @staticmethod
     def _assess_risk_level(avg_score: float) -> str:
         """Avalia nível de risco baseado em score"""
