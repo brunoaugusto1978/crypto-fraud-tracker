@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.4.0 - Real Intelligence Sources
+
+### Added
+- OFAC-derived local CSV importer for sanctioned wallet intelligence.
+- Source importer package under `backend/app/layers/source_importers`.
+- Example OFAC-derived CSV fixture under `feeds/ofac_derived.example.csv`.
+- Tests for OFAC-derived normalization and deduplication.
+- Documentation for real intelligence source import flow.
+
+### Changed
+- Generated OFAC-derived intelligence outputs are excluded from version control.
+
+
 ## v3.3.0 - Intelligence Feed Importers
 
 ### Added
