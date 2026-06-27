@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.3.0 - Intelligence Feed Importers
+
+### Added
+- CSV/JSON intelligence feed importer for wallet risk data.
+- Field alias normalization for common feed formats.
+- Deduplication by address, asset, category and source.
+- Example CSV feed under `feeds/input.example.csv`.
+- Tests for CSV import, JSON import and record normalization.
+- Documentation for intelligence feed importers.
+
+### Changed
+- Generated intelligence feed outputs are excluded from version control.
+
+
 ## v3.2.0 - Automatic Risk Enrichment
 
 ### Added
