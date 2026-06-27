@@ -53,3 +53,6 @@ files.zip
 .env.backup
 .env.*.backup
 *.backup
+
+# Generated intelligence feed outputs
+backend/data/address_intelligence.generated.json
