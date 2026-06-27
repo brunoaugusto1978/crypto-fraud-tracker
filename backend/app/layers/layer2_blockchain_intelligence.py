@@ -14,6 +14,7 @@ from typing import Optional, Dict, List
 from enum import Enum
 import random
 import json
+from app.layers.evidence import sha256_payload, utc_now_iso
 
 # ============================================================================
 # MOCKS DE DADOS
@@ -203,26 +204,46 @@ class MockBlockchainIntelligence(BlockchainIntelligenceAdapter):
         }
     
     async def get_wallet_history(self, wallet_address: str, limit: int = 100) -> List[Dict]:
-        """Simula histórico de transações"""
-        
+        """Simula histórico de transações no formato UTXO compatível com evidência."""
+
         await asyncio.sleep(random.uniform(0.2, 0.8))
-        
+
         transactions = []
         current_date = datetime.utcnow()
-        
-        for i in range(min(limit, random.randint(5, 50))):
+
+        for _ in range(min(limit, random.randint(5, 50))):
             tx_date = current_date - timedelta(days=random.randint(0, 365))
-            
+            txid = f"{''.join([hex(random.randint(0, 15))[2:] for _ in range(64)])}"
+            to_address = f"bc1q{''.join([hex(random.randint(0, 15))[2:] for _ in range(38)])}"
+            from_address = wallet_address if random.random() > 0.5 else f"bc1q{''.join([hex(random.randint(0, 15))[2:] for _ in range(38)])}"
+            amount_btc = round(random.uniform(0.01, 10), 8)
+            amount_sats = int(amount_btc * 100_000_000)
+            raw_payload = {
+                "txid": txid,
+                "mock": True,
+                "from_address": from_address,
+                "to_address": to_address,
+                "amount_sats": amount_sats,
+            }
+
             transactions.append({
-                "txid": f"{''.join([hex(random.randint(0, 15))[2:] for _ in range(64)])}",
-                "from_address": wallet_address if random.random() > 0.5 else f"bc1q{''.join([hex(random.randint(0, 15))[2:] for _ in range(38)])}",
-                "to_address": f"bc1q{''.join([hex(random.randint(0, 15))[2:] for _ in range(38)])}",
-                "amount_btc": round(random.uniform(0.01, 10), 8),
+                "txid": txid,
+                "from_address": from_address,
+                "to_address": to_address,
+                "amount_btc": amount_btc,
                 "timestamp": tx_date.isoformat() + 'Z',
+                "confirmed": True,
                 "confirmations": random.randint(1, 100000),
-                "fee_satoshi": random.randint(100, 10000)
+                "fee_satoshi": random.randint(100, 10000),
+                "inputs": [{"address": from_address, "value_sats": amount_sats, "value_btc": amount_btc}],
+                "outputs": [{"index": 0, "address": to_address, "value_sats": amount_sats, "value_btc": amount_btc}],
+                "transfers": [{"from_address": from_address, "to_address": to_address, "amount_btc": amount_btc, "amount_sats": amount_sats}],
+                "source": "mock",
+                "source_url": None,
+                "raw_sha256": sha256_payload(raw_payload),
+                "collected_at": utc_now_iso(),
             })
-        
+
         return sorted(transactions, key=lambda x: x['timestamp'], reverse=True)
     
     async def classify_wallet(self, wallet_address: str) -> str:
@@ -293,15 +314,21 @@ class BlockchainIntelligenceService:
         
         return enrichment
     
-    async def trace_transaction_chain(self, start_wallet: str, depth: int = 3) -> List[Dict]:
-        """Rastreia cadeia de transações até profundidade N"""
-        
+    async def trace_transaction_chain(self, start_wallet: str, depth: int = 3) -> Dict:
+        """
+        Rastreia cadeia de transações até profundidade N.
+
+        Retorna carteiras, transferências e transações brutas/projetadas preservando
+        txid, UTXO inputs/outputs e hashes de evidência. Não fabrica valores.
+        """
+
         visited = set()
         chain = []
+        transactions = []
+        raw_transactions = []
         queue = [(start_wallet, 0)]
 
         # Teto de wallets proporcional ao depth (evita explosao do grafo)
-        # depth 1 -> ~4, depth 2 -> ~12, depth 3 -> ~28
         max_wallets = min(50, 2 + 2 * (2 ** depth))
         # Quantos ramos seguir por wallet (fan-out controlado)
         branching = 3
@@ -321,14 +348,48 @@ class BlockchainIntelligenceService:
                 "enrichment": enrichment
             })
 
-            # Seguir apenas os primeiros 'branching' destinos
             history = await self.provider.get_wallet_history(wallet, limit=branching)
             for tx in history[:branching]:
-                next_wallet = tx['to_address']
-                if next_wallet not in visited:
-                    queue.append((next_wallet, current_depth + 1))
+                raw_transactions.append(tx)
+                transfers = tx.get("transfers") or [{
+                    "from_address": tx.get("from_address"),
+                    "to_address": tx.get("to_address"),
+                    "amount_btc": tx.get("amount_btc", 0),
+                    "amount_sats": int((tx.get("amount_btc", 0) or 0) * 100_000_000),
+                }]
 
-        return sorted(chain, key=lambda x: x['depth'])
+                for transfer in transfers[:branching]:
+                    from_address = transfer.get("from_address")
+                    to_address = transfer.get("to_address")
+                    if not from_address or not to_address:
+                        continue
+
+                    transaction = {
+                        "txid": tx.get("txid"),
+                        "from_address": from_address,
+                        "to_address": to_address,
+                        "amount_btc": transfer.get("amount_btc", 0),
+                        "amount_sats": transfer.get("amount_sats"),
+                        "timestamp": tx.get("timestamp"),
+                        "confirmed": tx.get("confirmed"),
+                        "confirmations": tx.get("confirmations", 0),
+                        "block_height": tx.get("block_height"),
+                        "fee_satoshi": tx.get("fee_satoshi", 0),
+                        "source": tx.get("source"),
+                        "source_url": tx.get("source_url"),
+                        "raw_sha256": tx.get("raw_sha256"),
+                    }
+                    transactions.append(transaction)
+
+                    next_wallet = to_address
+                    if next_wallet not in visited and len(visited) + len(queue) < max_wallets:
+                        queue.append((next_wallet, current_depth + 1))
+
+        return {
+            "wallets": sorted(chain, key=lambda x: x['depth']),
+            "transactions": transactions,
+            "raw_transactions": raw_transactions,
+        }
 
 # ============================================================================
 # EXEMPLO DE USO
@@ -352,7 +413,8 @@ async def main():
     
     # Teste 3: Rastreamento de cadeia
     print("\n=== Test 3: Trace Transaction Chain ===")
-    chain = await service.trace_transaction_chain(wallet_address, depth=2)
+    trace = await service.trace_transaction_chain(wallet_address, depth=2)
+    chain = trace["wallets"]
     print(f"Traced {len(chain)} wallets up to depth 2")
     for item in chain:
         print(f"  - {item['wallet'][:20]}... (depth: {item['depth']}) - {item['enrichment']['category']}")

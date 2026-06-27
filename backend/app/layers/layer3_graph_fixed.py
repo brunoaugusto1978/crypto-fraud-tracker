@@ -47,7 +47,9 @@ class GraphDatabaseService:
         self.conn.run_query(query, {'address': address, 'category': category,
                                      'risk_level': risk_level, 'risk_score': risk_score})
 
-    def add_transaction(self, from_address, to_address, amount_btc, txid=None, timestamp=None):
+    def add_transaction(self, from_address, to_address, amount_btc, txid=None, timestamp=None, evidence_hash=None, source=None):
+        if not from_address or not to_address:
+            return
         if txid is None:
             txid = f"tx_{datetime.utcnow().timestamp()}"
         if timestamp is None:
@@ -57,11 +59,15 @@ class GraphDatabaseService:
         query = """
         MATCH (from:Wallet {address: $from_address})
         MATCH (to:Wallet {address: $to_address})
-        MERGE (from)-[r:SENDS_TO {txid: $txid}]->(to)
-        SET r.amount_btc = $amount_btc, r.timestamp = $timestamp
+        MERGE (from)-[r:SENDS_TO {txid: $txid, from_address: $from_address, to_address: $to_address}]->(to)
+        SET r.amount_btc = $amount_btc,
+            r.timestamp = $timestamp,
+            r.evidence_hash = $evidence_hash,
+            r.source = $source
         """
         self.conn.run_query(query, {'from_address': from_address, 'to_address': to_address,
-                                     'amount_btc': amount_btc, 'txid': txid, 'timestamp': timestamp})
+                                     'amount_btc': amount_btc, 'txid': txid, 'timestamp': timestamp,
+                                     'evidence_hash': evidence_hash, 'source': source})
 
     def find_recipients(self, address, depth=3):
         depth = max(1, min(int(depth), 5))  # limite seguro: 1..5

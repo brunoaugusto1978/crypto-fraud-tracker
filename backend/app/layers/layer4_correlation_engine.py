@@ -103,9 +103,18 @@ class RuleFactory:
             transactions = context.get('recent_transactions', [])
             # Se todas as transações ocorreram em menos de 1 hora
             if len(transactions) >= 5:
-                timestamps = [t['timestamp'] for t in transactions]
-                time_diff = max(timestamps) - min(timestamps)
-                return time_diff < timedelta(hours=1)
+                parsed = []
+                for tx in transactions:
+                    ts = tx.get('timestamp')
+                    if not ts:
+                        continue
+                    try:
+                        parsed.append(datetime.fromisoformat(str(ts).replace('Z', '+00:00')))
+                    except ValueError:
+                        continue
+                if len(parsed) >= 5:
+                    time_diff = max(parsed) - min(parsed)
+                    return time_diff < timedelta(hours=1)
             return False
         
         return DetectionRule(
@@ -360,8 +369,11 @@ class ClusterAnalyzer:
         # Criar timeline
         timeline = self._build_timeline(transactions)
         
+        # Tipologias AML cripto
+        aml_typologies = self._detect_aml_typologies(wallets, transactions)
+
         # Recomendações
-        recommendations = self._generate_recommendations(wallets, scores, suspected_crime)
+        recommendations = self._generate_recommendations(wallets, scores, suspected_crime, aml_typologies)
         
         return {
             'cluster_id': cluster_id,
@@ -371,11 +383,84 @@ class ClusterAnalyzer:
             'transaction_count': len(transactions),
             'average_risk_score': round(avg_risk, 1),
             'suspected_crime': suspected_crime,
+            'aml_typologies': aml_typologies,
             'timeline': timeline,
             'recommendations': recommendations,
             'analyzed_at': datetime.utcnow().isoformat() + 'Z'
         }
     
+    @staticmethod
+    def _detect_aml_typologies(wallets: List[Dict], transactions: List[Dict]) -> List[Dict]:
+        """Detecta tipologias AML básicas e explicáveis para criptoativos."""
+        typologies = []
+        incoming = {}
+        outgoing = {}
+        counterparties = {}
+        mixer_addresses = {w.get('address') for w in wallets if w.get('category') == 'mixer'}
+        exchange_addresses = {w.get('address') for w in wallets if w.get('category') == 'exchange'}
+
+        for tx in transactions:
+            src = tx.get('from_address')
+            dst = tx.get('to_address')
+            amount = float(tx.get('amount_btc') or 0)
+            if not src or not dst:
+                continue
+            outgoing[src] = outgoing.get(src, 0) + amount
+            incoming[dst] = incoming.get(dst, 0) + amount
+            counterparties.setdefault(src, set()).add(dst)
+            counterparties.setdefault(dst, set()).add(src)
+
+        for address, peers in counterparties.items():
+            if len(peers) >= 8:
+                typologies.append({
+                    'id': 'fan_in_fan_out',
+                    'severity': 'medium',
+                    'address': address,
+                    'peer_count': len(peers),
+                    'explanation': 'Carteira interage com muitas contrapartes, padrao compativel com coleta/dispersao.'
+                })
+
+        for tx in transactions:
+            if tx.get('to_address') in mixer_addresses:
+                typologies.append({
+                    'id': 'mixer_exposure_direct',
+                    'severity': 'high',
+                    'address': tx.get('to_address'),
+                    'txid': tx.get('txid'),
+                    'amount_btc': tx.get('amount_btc'),
+                    'explanation': 'Fluxo direto para endereco classificado como mixer.'
+                })
+            if tx.get('to_address') in exchange_addresses:
+                typologies.append({
+                    'id': 'exchange_cashout_candidate',
+                    'severity': 'medium',
+                    'address': tx.get('to_address'),
+                    'txid': tx.get('txid'),
+                    'amount_btc': tx.get('amount_btc'),
+                    'explanation': 'Fluxo para exchange; possivel ponto de cash-out/KYC.'
+                })
+
+        # Peel-chain simplificado: sequencia com baixo fan-out seguindo uma carteira por hop.
+        small_chain = [tx for tx in transactions if float(tx.get('amount_btc') or 0) > 0]
+        if len(small_chain) >= 4:
+            typologies.append({
+                'id': 'layering_or_peel_chain_candidate',
+                'severity': 'medium',
+                'transaction_count': len(small_chain),
+                'explanation': 'Cadeia com multiplos hops; requer revisao para layering/peel chain.'
+            })
+
+        # Remover duplicatas preservando ordem.
+        seen = set()
+        unique = []
+        for item in typologies:
+            key = (item.get('id'), item.get('address'), item.get('txid'))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        return unique
+
     @staticmethod
     def _infer_crime_type(wallets: List[Dict], transactions: List[Dict], scores: List[Dict]) -> str:
         """Infere tipo de crime baseado nas evidências"""
@@ -426,7 +511,7 @@ class ClusterAnalyzer:
         return timeline
     
     @staticmethod
-    def _generate_recommendations(wallets: List[Dict], scores: List[Dict], crime_type: str) -> List[str]:
+    def _generate_recommendations(wallets: List[Dict], scores: List[Dict], crime_type: str, aml_typologies: Optional[List[Dict]] = None) -> List[str]:
         """Gera recomendações de ação"""
         
         recommendations = []
@@ -447,6 +532,14 @@ class ClusterAnalyzer:
             recommendations.append('💰 Reportar para FinCEN/FATF')
             recommendations.append('🔗 Rastrear destino final')
         
+        typology_ids = {t.get('id') for t in (aml_typologies or [])}
+        if 'mixer_exposure_direct' in typology_ids:
+            recommendations.append('🧾 Preservar evidencia on-chain e revisar exposicao direta a mixer')
+        if 'exchange_cashout_candidate' in typology_ids:
+            recommendations.append('🏦 Preparar pacote de evidencias para eventual pedido a exchange/KYC')
+        if 'layering_or_peel_chain_candidate' in typology_ids:
+            recommendations.append('🔁 Revisar cadeia de hops para layering/peel chain')
+
         # Score médio alto
         avg_score = sum(s['risk_score'] for s in scores) / len(scores) if scores else 0
         if avg_score >= 80:

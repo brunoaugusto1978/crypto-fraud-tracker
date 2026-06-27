@@ -5,6 +5,7 @@ Classificacao via lista local de IOCs + heuristica.
 import httpx
 from datetime import datetime, timezone
 from typing import Dict, List
+from app.layers.evidence import sha256_payload, utc_now_iso
 
 SATOSHI = 100_000_000
 
@@ -20,7 +21,7 @@ KNOWN_ADDRESSES = {
     "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw": {"category": "ransomware", "label": "WannaCry"},
     "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn": {"category": "ransomware", "label": "WannaCry"},
 
-    # SamSam ransomware (facilitadores de lavagem - 1as wallets sancionadas pela OFAC, 2018)
+    # SamSam ransomware (facilitadores de lavagem - wallets sancionadas pela OFAC, 2018)
     # Fontes: US Treasury/OFAC SDN List, FDD, WilmerHale, Akin Gump
     "149w62rY42aZBox8fGcmqNsXUzSStKeq8C": {"category": "ransomware", "label": "SamSam (OFAC SDN)"},
     "1AjZPMsnmpdK2Rv9KQNfMurTXinscVro9V": {"category": "ransomware", "label": "SamSam (OFAC SDN)"},
@@ -31,6 +32,10 @@ CATEGORY_RISK_LEVEL = {
     "mixer": "high", "gambling": "medium", "marketplace": "medium",
     "exchange": "low", "legitimate": "low", "unknown": "low",
 }
+
+
+def _safe_btc(value_sats: int) -> float:
+    return round((value_sats or 0) / SATOSHI, 8)
 
 
 class BlockstreamIntelligence:
@@ -63,15 +68,20 @@ class BlockstreamIntelligence:
             return {"category": "exchange", "label": "alto volume (heuristica)", "risk_level": "low"}
         return {"category": "unknown", "label": None, "risk_level": "low"}
 
+    async def _get_json(self, url: str):
+        data = self._cache_get(url)
+        if data is not None:
+            return data
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        self._cache_set(url, data)
+        return data
+
     async def enrich_wallet(self, wallet_address):
         url = f"{self.base_url}/address/{wallet_address}"
-        data = self._cache_get(url)
-        if data is None:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                data = resp.json()
-            self._cache_set(url, data)
+        data = await self._get_json(url)
         chain = data.get("chain_stats", {})
         mempool = data.get("mempool_stats", {})
         funded = chain.get("funded_txo_sum", 0)
@@ -83,49 +93,108 @@ class BlockstreamIntelligence:
             "wallet": wallet_address, "category": cls["category"],
             "risk_level": cls["risk_level"],
             "confidence": 1.0 if wallet_address in self.known else 0.5,
-            "source": "blockstream", "labeled_as": cls["label"],
+            "source": "blockstream", "source_url": url,
+            "raw_sha256": sha256_payload(data),
+            "labeled_as": cls["label"],
             "transactions_count": tx_count,
             "balance_btc": round(balance_btc, 8),
             "total_received_btc": round(funded / SATOSHI, 8),
             "total_sent_btc": round(spent / SATOSHI, 8),
+            "collected_at": utc_now_iso(),
         }
 
     async def get_wallet_history(self, wallet_address, limit=25):
+        """
+        Retorna transações on-chain preservando o modelo UTXO.
+
+        Compatibilidade: cada item tambem expoe from_address/to_address/amount_btc,
+        mas a evidencia correta está em inputs, outputs e transfers.
+        """
         url = f"{self.base_url}/address/{wallet_address}/txs"
-        txs = self._cache_get(url)
-        if txs is None:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                txs = resp.json()
-            self._cache_set(url, txs)
+        txs = await self._get_json(url)
         history = []
+
         for tx in txs[:limit]:
-            vouts = tx.get("vout", [])
-            best_to, best_val = None, 0
-            for v in vouts:
-                addr = v.get("scriptpubkey_address")
-                val = v.get("value", 0)
-                if addr and addr != wallet_address and val > best_val:
-                    best_to, best_val = addr, val
-            vins = tx.get("vin", [])
-            from_addr = wallet_address
-            for vin in vins:
-                a = vin.get("prevout", {}).get("scriptpubkey_address")
-                if a:
-                    from_addr = a
-                    break
             status = tx.get("status", {})
             ts = status.get("block_time")
             timestamp = (datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-                         if ts else datetime.utcnow().isoformat() + "Z")
+                         if ts else utc_now_iso())
+
+            inputs = []
+            input_addresses = set()
+            wallet_is_input = False
+            for vin in tx.get("vin", []):
+                prevout = vin.get("prevout") or {}
+                addr = prevout.get("scriptpubkey_address")
+                value_sats = prevout.get("value", 0) or 0
+                if addr:
+                    input_addresses.add(addr)
+                if addr == wallet_address:
+                    wallet_is_input = True
+                inputs.append({
+                    "address": addr,
+                    "value_sats": value_sats,
+                    "value_btc": _safe_btc(value_sats),
+                    "txid": vin.get("txid"),
+                    "vout": vin.get("vout"),
+                })
+
+            outputs = []
+            for idx, vout in enumerate(tx.get("vout", [])):
+                value_sats = vout.get("value", 0) or 0
+                outputs.append({
+                    "index": idx,
+                    "address": vout.get("scriptpubkey_address"),
+                    "value_sats": value_sats,
+                    "value_btc": _safe_btc(value_sats),
+                    "scriptpubkey_type": vout.get("scriptpubkey_type"),
+                })
+
+            # Transfers are analytical projections from a UTXO transaction.
+            # When the investigated wallet spends, follow outputs not returning to the same wallet.
+            # When it receives, model senders as the input addresses and destination as the wallet.
+            transfers = []
+            if wallet_is_input:
+                for out in outputs:
+                    to_addr = out.get("address")
+                    if to_addr and to_addr != wallet_address:
+                        transfers.append({
+                            "from_address": wallet_address,
+                            "to_address": to_addr,
+                            "amount_btc": out["value_btc"],
+                            "amount_sats": out["value_sats"],
+                        })
+            else:
+                for out in outputs:
+                    if out.get("address") == wallet_address:
+                        for src in sorted(a for a in input_addresses if a):
+                            transfers.append({
+                                "from_address": src,
+                                "to_address": wallet_address,
+                                "amount_btc": out["value_btc"],
+                                "amount_sats": out["value_sats"],
+                            })
+
+            # Compatibility projection for existing report/graph code.
+            top_transfer = max(transfers, key=lambda t: t.get("amount_sats", 0), default=None)
+            raw_sha256 = sha256_payload(tx)
             history.append({
-                "txid": tx.get("txid"), "from_address": from_addr,
-                "to_address": best_to or wallet_address,
-                "amount_btc": round(best_val / SATOSHI, 8),
+                "txid": tx.get("txid"),
+                "from_address": (top_transfer or {}).get("from_address", wallet_address),
+                "to_address": (top_transfer or {}).get("to_address", wallet_address),
+                "amount_btc": (top_transfer or {}).get("amount_btc", 0),
                 "timestamp": timestamp,
+                "confirmed": status.get("confirmed", False),
                 "confirmations": 1 if status.get("confirmed") else 0,
+                "block_height": status.get("block_height"),
                 "fee_satoshi": tx.get("fee", 0),
+                "inputs": inputs,
+                "outputs": outputs,
+                "transfers": transfers,
+                "source": "blockstream",
+                "source_url": url,
+                "raw_sha256": raw_sha256,
+                "raw_payload": tx,
             })
         return history
 
